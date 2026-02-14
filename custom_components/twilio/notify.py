@@ -22,6 +22,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
+try:
+    from homeassistant.components.camera import async_get_image
+except ImportError:
+    async_get_image = None
+
 from .const import (
     CONF_FROM_NUMBER,
     CONF_VOICE,
@@ -165,23 +170,13 @@ class TwilioSMSNotificationService(BaseNotificationService):
         # Support camera entity
         if ATTR_CAMERA_ENTITY in data:
             camera_entity = data[ATTR_CAMERA_ENTITY]
-            try:
-                camera = self.hass.states.get(camera_entity)
-                if camera:
-                    # Get camera image
-                    from homeassistant.components.camera import async_get_image
-                    image = await async_get_image(self.hass, camera_entity)
-                    
-                    # Upload image to a temporary hosting service or encode as data URL
-                    # For now, we'll log a warning that camera entity requires external hosting
-                    _LOGGER.warning(
-                        "Camera entity support requires external image hosting. "
-                        "Please use media_url with a publicly accessible URL instead."
-                    )
-                else:
-                    _LOGGER.error("Camera entity %s not found", camera_entity)
-            except Exception as exc:
-                _LOGGER.error("Failed to get camera image from %s: %s", camera_entity, exc)
+            # TODO: Implement camera image upload to external hosting service
+            # For now, log a warning that camera entity requires external hosting
+            _LOGGER.warning(
+                "Camera entity support requires external image hosting. "
+                "The image will not be sent. "
+                "Please upload camera snapshots to a publicly accessible URL and use media_url instead."
+            )
 
         # Support image file path
         if ATTR_IMAGE_PATH in data:
@@ -240,8 +235,11 @@ class TwilioSMSNotificationService(BaseNotificationService):
 
     def send_message(self, message: str = "", **kwargs: Any) -> None:
         """Send message (sync wrapper)."""
-        import asyncio
-        asyncio.create_task(self.async_send_message(message, **kwargs))
+        # Use hass to schedule the async task properly
+        if self.hass:
+            self.hass.async_create_task(self.async_send_message(message, **kwargs))
+        else:
+            _LOGGER.error("Cannot send message: HomeAssistant instance not available")
 
 
 class TwilioCallNotificationService(BaseNotificationService):
@@ -360,7 +358,7 @@ class TwilioCallNotificationService(BaseNotificationService):
         live transcription, status callbacks), you should:
         1. Host a webhook endpoint in your Home Assistant instance
         2. Generate TwiML with <Gather> for DTMF collection
-        3. Use <Record> with transcribe=true for transcription
+        3. Use <Start><Stream> with transcription for real-time transcription
         4. Handle status callbacks for real-time updates
         
         Note: Twimlets is a legacy service and URL-encoded TwiML has length limitations.
@@ -370,9 +368,37 @@ class TwilioCallNotificationService(BaseNotificationService):
         record_enabled = data.get(ATTR_RECORD_ENABLED, False)
         transcribe_enabled = data.get(ATTR_TRANSCRIBE_ENABLED, False)
 
-        # For now, create a basic TwiML response
-        # In production, this should point to a hosted endpoint
+        # Create TwiML response
         response = VoiceResponse()
+
+        # Get transcription configuration
+        transcribe_config = data.get(ATTR_TRANSCRIBE_CONFIG, {})
+        
+        # Use Stream transcription for real-time transcription with enhanced options
+        if transcribe_enabled and transcribe_config and self.webhook_url:
+            # Start streaming transcription
+            start = response.start()
+            transcription_params = {
+                "status_callback_url": self.webhook_url,
+                "status_callback_method": "POST",
+            }
+            
+            # Add enhanced transcription options
+            if CONF_TRANSCRIBE_LANGUAGE in transcribe_config:
+                transcription_params["language_code"] = transcribe_config[CONF_TRANSCRIBE_LANGUAGE]
+            else:
+                transcription_params["language_code"] = DEFAULT_TRANSCRIBE_LANGUAGE
+            
+            if CONF_PROFANITY_FILTER in transcribe_config:
+                transcription_params["profanity_filter"] = transcribe_config[CONF_PROFANITY_FILTER]
+            
+            if CONF_PARTIAL_RESULTS in transcribe_config:
+                transcription_params["partial_results"] = transcribe_config[CONF_PARTIAL_RESULTS]
+            
+            if CONF_AUTOMATIC_PUNCTUATION in transcribe_config:
+                transcription_params["enable_automatic_punctuation"] = transcribe_config[CONF_AUTOMATIC_PUNCTUATION]
+            
+            start.transcription(**transcription_params)
 
         if gather_enabled:
             gather_config = data.get(ATTR_GATHER_CONFIG, {})
@@ -391,28 +417,18 @@ class TwilioCallNotificationService(BaseNotificationService):
             response.say(message, voice=self.voice, language=self.language)
 
         if record_enabled:
-            # Get transcription configuration
-            transcribe_config = data.get(ATTR_TRANSCRIBE_CONFIG, {})
-            
-            # Build record parameters
+            # Use basic recording (not streaming)
             record_params = {
-                "transcribe": transcribe_enabled,
+                "transcribe": transcribe_enabled and not transcribe_config,  # Use basic transcription only if no advanced config
             }
             
-            # Add enhanced transcription options if transcribe is enabled
-            if transcribe_enabled and transcribe_config:
-                # Language code for transcription
+            # Add transcription callback for basic transcription
+            if transcribe_enabled and not transcribe_config and self.webhook_url:
+                record_params["transcribe_callback"] = self.webhook_url
+                
+                # Basic transcription only supports language parameter
                 if CONF_TRANSCRIBE_LANGUAGE in transcribe_config:
                     record_params["transcribe_language"] = transcribe_config[CONF_TRANSCRIBE_LANGUAGE]
-                
-                # Profanity filter
-                if CONF_PROFANITY_FILTER in transcribe_config:
-                    record_params["transcribe_profanity_filter"] = transcribe_config[CONF_PROFANITY_FILTER]
-            
-            # Note: transcribe_callback requires a full absolute URL
-            # For production, construct with external_url: f"{self.hass.config.external_url}/api/webhook/{webhook_id}"
-            if self.webhook_url and transcribe_enabled:
-                record_params["transcribe_callback"] = self.webhook_url
             
             response.record(**record_params)
 

@@ -9,6 +9,10 @@
 #   target: List of phone numbers (with country code, e.g., +1234567890)
 #   data:
 #     media_url: (Optional) URL(s) of media to send (for MMS)
+#     camera_entity: (Optional) Camera entity ID to capture and send (requires external hosting)
+#     image_path: (Optional) Local image file path (requires external hosting)
+#     status_callback: (Optional) Enable status callbacks (true/false)
+#     status_callback_method: (Optional) HTTP method for status callbacks (POST/GET/PUT, default: POST)
 
 # Voice Call Service (via notify platform)  
 # Service: notify.twilio_call
@@ -22,7 +26,14 @@
 #     gather_enabled: (Optional) Enable DTMF input collection (default: false)
 #     record_enabled: (Optional) Enable call recording (default: false)
 #     transcribe_enabled: (Optional) Enable transcription of recordings (default: false)
+#     status_callback: (Optional) Enable status callbacks (true/false)
+#     status_callback_method: (Optional) HTTP method for status callbacks (POST/GET/PUT, default: POST)
 #     gather_config: (Optional) Configuration for gather
 #       num_digits: Number of digits to collect (default: 1)
 #       timeout: Timeout in seconds (default: 5)
 #       finish_on_key: Key to finish input (default: "#")
+#     transcribe: (Optional) Enhanced real-time streaming transcription configuration
+#       language_code: Language code for transcription (default: "en-US")
+#       profanity_filter: Filter profanity in transcription (true/false, default: false)
+#       partial_results: Enable partial transcription results in real-time (true/false, default: false)
+#       automatic_punctuation: Enable automatic punctuation (true/false, default: false)

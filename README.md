@@ -100,6 +100,37 @@ data:
       - "https://example.com/image.jpg"
 ```
 
+#### MMS with Camera Entity
+
+**Note:** Camera entity support requires the image to be hosted at a publicly accessible URL. Twilio cannot access local files directly.
+
+```yaml
+service: notify.twilio_sms
+data:
+  message: "Camera snapshot"
+  target:
+    - "+1234567890"
+  data:
+    camera_entity: "camera.front_door"
+```
+
+#### MMS with Status Callbacks
+
+Receive status updates for your messages:
+
+```yaml
+service: notify.twilio_sms
+data:
+  message: "Message with status tracking"
+  target:
+    - "+1234567890"
+  data:
+    media_url:
+      - "https://example.com/image.jpg"
+    status_callback: true
+    status_callback_method: "POST"  # or "GET" or "PUT"
+```
+
 ### Making Voice Calls
 
 #### Simple Voice Message
@@ -141,6 +172,43 @@ data:
     call_type: "interactive"
     record_enabled: true
     transcribe_enabled: true
+```
+
+#### Call with Enhanced Transcription Options
+
+Use real-time streaming transcription with advanced options:
+
+```yaml
+service: notify.twilio_call
+data:
+  message: "Please leave a detailed message."
+  target:
+    - "+1234567890"
+  data:
+    call_type: "interactive"
+    transcribe_enabled: true
+    transcribe:
+      language_code: "en-US"
+      profanity_filter: true
+      partial_results: true
+      automatic_punctuation: true
+```
+
+**Note:** The streaming transcription API provides real-time results when `partial_results` is enabled.
+
+#### Call with Status Callbacks
+
+Track call status in real-time:
+
+```yaml
+service: notify.twilio_call
+data:
+  message: "Important call with tracking"
+  target:
+    - "+1234567890"
+  data:
+    status_callback: true
+    status_callback_method: "POST"
 ```
 
 ## Events
@@ -296,6 +364,35 @@ logger:
 2. **Webhook Not Receiving Data**: Ensure your Home Assistant instance is accessible from the internet and the webhook URL is correctly configured in Twilio
 3. **SMS Not Sending**: Verify your Twilio account has SMS capabilities and sufficient balance
 4. **Voice Calls Failing**: Check that your Twilio phone number has voice capabilities enabled
+5. **Camera Entity Images Not Sending**: Camera entities and local image files require external hosting. Upload images to a publicly accessible URL and use the `media_url` parameter instead.
+
+## Development
+
+### Version Management
+
+This repository uses automated version management through GitHub Actions:
+
+#### For Contributors
+
+When creating a pull request to `main`, add one of these labels to automatically bump the version:
+- `patch` - For bug fixes and minor changes (e.g., 1.0.0 → 1.0.1)
+- `minor` - For new features (e.g., 1.0.0 → 1.1.0)
+- `major` - For breaking changes (e.g., 1.0.0 → 2.0.0)
+
+The workflow will automatically:
+1. Update `manifest.json` with the new version
+2. Update `CHANGELOG.md` with the version entry
+3. Commit the changes to your PR branch
+
+#### For Maintainers
+
+When merging to `main`, the release workflow will automatically:
+1. Read the version from `manifest.json`
+2. Create a git tag (e.g., `v1.0.1`)
+3. Create a GitHub release with release notes
+4. Upload a distribution archive (`twilio.zip`)
+
+No manual version management is required!
 
 ## Support
 
