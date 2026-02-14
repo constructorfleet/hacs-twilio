@@ -114,43 +114,7 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, import_config: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Import config from configuration.yaml."""
-        if import_config is None or not (
-            await validate_input(self.hass, import_config)
-        ):
-            return self.async_abort(reason="invalid_import")
-
-        account_sid = import_config[CONF_ACCOUNT_SID]
-        _LOGGER.error("Importing Twilio config")
-        _LOGGER.error(import_config)
-
-        for entry in self._async_current_entries():
-            if entry.data.get(CONF_ACCOUNT_SID) == account_sid:
-                self.hass.config_entries.async_update_entry(
-                    entry,
-                    data={
-                        **entry.data,
-                        CONF_AUTH_TOKEN: import_config[CONF_AUTH_TOKEN],
-                    },
-                )
-                return self.async_abort(reason="already_configured")
-
-        await self.async_set_unique_id(account_sid)
-        self._abort_if_unique_id_configured(
-            updates={CONF_AUTH_TOKEN: import_config[CONF_AUTH_TOKEN]}
-        )
-
-        webhook_id = webhook.async_generate_id()
-        webhook_url = webhook.async_generate_url(self.hass, webhook_id)
-
-        return self.async_create_entry(
-            title="Twilio",
-            data={
-                CONF_ACCOUNT_SID: account_sid,
-                CONF_AUTH_TOKEN: import_config[CONF_AUTH_TOKEN],
-                CONF_WEBHOOK_ID: webhook_id,
-            },
-            description_placeholders={"webhook_url": webhook_url},
-        )
+        return await self.async_step_user(import_config)
 
 
 class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
