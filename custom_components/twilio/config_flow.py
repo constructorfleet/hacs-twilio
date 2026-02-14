@@ -31,6 +31,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 
     Data has the keys from DATA_SCHEMA with values provided by the user.
     """
+    if CONF_ACCOUNT_SID not in data:
+        raise ValueError("Missing account SID")
+    if CONF_AUTH_TOKEN not in data:
+        raise ValueError("Missing auth token")
     # Test the credentials by creating a client
     try:
         client = Client(data[CONF_ACCOUNT_SID], data[CONF_AUTH_TOKEN])

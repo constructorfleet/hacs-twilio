@@ -74,13 +74,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configure based on config entry."""
+    # Store Twilio client and webhook info in hass.data
+    hass.data.setdefault(DOMAIN, {})
+
     webhook_id = entry.data[CONF_WEBHOOK_ID]
     webhook_url = webhook_component.async_generate_url(hass, webhook_id)
 
     webhook_component.async_register(hass, DOMAIN, "Twilio", webhook_id, handle_webhook)
 
-    # Store Twilio client and webhook info in hass.data
-    hass.data.setdefault(DOMAIN, {})
     # Create async HTTP client for Twilio
     http_client = AsyncTwilioHttpClient()
     hass.data[DOMAIN][entry.entry_id] = {
