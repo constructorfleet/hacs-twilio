@@ -23,7 +23,10 @@
     "step": {
       "init": {
         "title": "Twilio Options",
-        "description": "Configure additional options for your Twilio integration."
+        "description": "Configure additional options for your Twilio integration.",
+        "data": {
+          "sensor_cleanup_hours": "Hours to keep call sensors after completion (1-168)"
+        }
       }
     }
   }

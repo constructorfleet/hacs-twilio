@@ -13,6 +13,15 @@ A comprehensive Home Assistant custom component for integrating with Twilio, pro
   - Gather DTMF input (key presses) during calls
   - Live transcription of recorded messages
   - Phrase-to-key mapping for automated responses
+- **Voice Call Control**:
+  - Send DTMF digits to active calls
+  - Start recording on demand during active calls
+  - Track call status with sensor entities
+- **Voice Call Sensors**: Real-time call status tracking with:
+  - Current call status
+  - Active transcription segments
+  - Full transcription history
+  - Phone number information
 - **Event-Driven**: Fire Home Assistant events for:
   - Incoming SMS/MMS messages
   - Incoming phone calls
@@ -211,6 +220,124 @@ data:
     status_callback_method: "POST"
 ```
 
+### Controlling Active Calls
+
+#### Send DTMF Digits to Active Call
+
+Send key presses to an active call (useful for navigating phone menus):
+
+```yaml
+service: twilio.send_dtmf
+data:
+  call_sid: "CA1234567890abcdef1234567890abcdef"  # From sensor or event
+  digits: "1234#"  # Keys to send (0-9, *, #, w for 0.5s pause)
+```
+
+Example automation to automatically navigate a phone menu:
+
+```yaml
+automation:
+  - alias: "Navigate Phone Menu Automatically"
+    trigger:
+      - platform: state
+        entity_id: sensor.twilio_call_ca123456
+        to: "in-progress"
+    action:
+      - delay: "00:00:05"  # Wait for greeting
+      - service: twilio.send_dtmf
+        data:
+          call_sid: "{{ trigger.to_state.attributes.call_sid }}"
+          digits: "1"  # Press 1 for English
+      - delay: "00:00:03"
+      - service: twilio.send_dtmf
+        data:
+          call_sid: "{{ trigger.to_state.attributes.call_sid }}"
+          digits: "2#"  # Press 2 then confirm
+```
+
+#### Start Recording on Demand
+
+Start recording an active call:
+
+```yaml
+service: twilio.start_recording
+data:
+  call_sid: "CA1234567890abcdef1234567890abcdef"  # From sensor or event
+  recording_channels: "mono"  # or "dual"
+  recording_status_callback: true
+  trim: "trim-silence"
+```
+
+Example automation to start recording when specific keywords are detected:
+
+```yaml
+automation:
+  - alias: "Start Recording on Important Call"
+    trigger:
+      - platform: event
+        event_type: twilio_call_received
+    condition:
+      - condition: template
+        value_template: "{{ trigger.event.data.from == '+1234567890' }}"
+    action:
+      - service: twilio.start_recording
+        data:
+          call_sid: "{{ trigger.event.data.call_sid }}"
+          recording_channels: "dual"
+          recording_status_callback: true
+```
+
+### Voice Call Sensors
+
+The integration automatically creates sensor entities for all voice calls (both incoming and outgoing). These sensors track:
+
+- **State**: Current call status (queued, ringing, in-progress, completed, etc.)
+- **Attributes**:
+  - `call_sid`: Unique call identifier
+  - `phone_number`: The phone number involved in the call
+  - `from`: Caller phone number
+  - `to`: Recipient phone number
+  - `direction`: Call direction (inbound-api for received calls, outbound-api for calls you make)
+  - `current_transcription_segment`: Latest transcription segment
+  - `full_transcription`: Complete transcription history
+
+**Note**: Sensors are created automatically when:
+- You make a call using `notify.twilio_call`
+- You receive an incoming call (with webhook configured)
+- Call status updates are received from Twilio
+
+**Auto-Cleanup**: Sensors are automatically removed after a configured period (default: 24 hours) once the call ends. This keeps your entity list clean. You can configure this timeout in the integration options (Settings → Devices & Services → Twilio → Configure):
+- **Sensor Cleanup Hours**: Set how long to keep call sensors after completion (1-168 hours, default: 24)
+
+Example usage in automations:
+
+```yaml
+automation:
+  - alias: "Notify on Transcription Update"
+    trigger:
+      - platform: state
+        entity_id: sensor.twilio_call_ca123456
+        attribute: current_transcription_segment
+    action:
+      - service: notify.mobile_app
+        data:
+          message: "Voice transcription: {{ trigger.to_state.attributes.current_transcription_segment }}"
+```
+
+```yaml
+automation:
+  - alias: "Save Transcription When Call Ends"
+    trigger:
+      - platform: state
+        entity_id: sensor.twilio_call_ca123456
+        to: "completed"
+    action:
+      - service: notify.persistent_notification
+        data:
+          title: "Call Transcript"
+          message: "{{ trigger.to_state.attributes.full_transcription }}"
+```
+
 ## Events
 
 The integration fires various events that you can use in automations:
@@ -259,6 +386,23 @@ automation:
         data:
           name: "Incoming Call"
           message: "Call from {{ trigger.event.data.from }}"
+```
+
+### Call Initiated Event
+
+Triggered when you make an outgoing call:
+
+```yaml
+automation:
+  - alias: "Log Outgoing Calls"
+    trigger:
+      - platform: event
+        event_type: twilio_call_initiated
+    action:
+      - service: logbook.log
+        data:
+          name: "Outgoing Call"
+          message: "Call to {{ trigger.event.data.to }} (SID: {{ trigger.event.data.call_sid }})"
 ```
 
 ### Transcription Received Event
