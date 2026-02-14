@@ -1,4 +1,5 @@
 """Tests for __init__.py setup functions."""
+import inspect
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from homeassistant.config_entries import ConfigEntry
@@ -114,6 +115,8 @@ async def test_async_setup_entry(
     assert SERVICE_SEND_DTMF in service_names
     assert SERVICE_START_RECORDING in service_names
     assert SERVICE_PAUSE in service_names
+    for service_call in service_calls:
+        assert inspect.iscoroutinefunction(service_call[0][2])
 
 
 @pytest.mark.unit
