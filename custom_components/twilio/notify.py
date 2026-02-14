@@ -90,34 +90,40 @@ async def async_setup_entry(
         return
 
     options = getattr(entry, "options", {}) or {}
-    if len(options) == 0:
-        options = getattr(entry, "data", {}) or {}
-    configured_numbers = options.get(CONF_PHONE_NUMBERS, [])
+    data = getattr(entry, "data", {}) or {}
+
+    def _entry_value(key: str, default: Any) -> Any:
+        """Get option from options first, fallback to entry data."""
+        if key in options:
+            return options.get(key, default)
+        return data.get(key, default)
+
+    configured_numbers = _entry_value(CONF_PHONE_NUMBERS, [])
     if not isinstance(configured_numbers, list):
         configured_numbers = []
     configured_numbers = [
         str(number).strip() for number in configured_numbers if str(number).strip()
     ]
-    sms_targets = options.get(CONF_SMS_TARGETS, [])
+    sms_targets = _entry_value(CONF_SMS_TARGETS, [])
     if not isinstance(sms_targets, list):
         sms_targets = []
     sms_targets = [str(target).strip() for target in sms_targets if str(target).strip()]
-    call_targets = options.get(CONF_CALL_TARGETS, [])
+    call_targets = _entry_value(CONF_CALL_TARGETS, [])
     if not isinstance(call_targets, list):
         call_targets = []
     call_targets = [
         str(target).strip() for target in call_targets if str(target).strip()
     ]
-    sms_targets_by_number = options.get(CONF_SMS_TARGETS_BY_NUMBER, {})
+    sms_targets_by_number = _entry_value(CONF_SMS_TARGETS_BY_NUMBER, {})
     if not isinstance(sms_targets_by_number, dict):
         sms_targets_by_number = {}
-    call_targets_by_number = options.get(CONF_CALL_TARGETS_BY_NUMBER, {})
+    call_targets_by_number = _entry_value(CONF_CALL_TARGETS_BY_NUMBER, {})
     if not isinstance(call_targets_by_number, dict):
         call_targets_by_number = {}
 
     # Backward compatibility for installs that still have single from_number option.
     if not configured_numbers:
-        fallback_number = options.get(CONF_FROM_NUMBER, "")
+        fallback_number = _entry_value(CONF_FROM_NUMBER, "")
         if isinstance(fallback_number, str) and fallback_number:
             configured_numbers = [fallback_number]
 
@@ -125,9 +131,9 @@ async def async_setup_entry(
         _LOGGER.warning("Skipping Twilio notify setup: no phone numbers are configured")
         return
 
-    voice = options.get(CONF_VOICE, DEFAULT_VOICE)
-    language = options.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)
-    phrase_mappings = options.get(CONF_PHRASE_MAPPINGS, {})
+    voice = _entry_value(CONF_VOICE, DEFAULT_VOICE)
+    language = _entry_value(CONF_LANGUAGE, DEFAULT_LANGUAGE)
+    phrase_mappings = _entry_value(CONF_PHRASE_MAPPINGS, {})
     if not isinstance(phrase_mappings, dict):
         phrase_mappings = {}
 
