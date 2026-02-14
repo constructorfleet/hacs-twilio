@@ -134,7 +134,13 @@ def test_call_service_simple_call(hass, mock_twilio_client):
         mock_twilio_client, "+1234567890", hass=hass
     )
     
-    with patch.object(hass, "async_create_task") as mock_create_task:
+    # Mock async_create_task to consume the coroutine without awaiting
+    def mock_create_task_impl(coro):
+        # Close the coroutine to prevent warning
+        coro.close()
+        return MagicMock()
+    
+    with patch.object(hass, "async_create_task", side_effect=mock_create_task_impl) as mock_create_task:
         service.send_message(
             "Hello world",
             **{ATTR_TARGET: ["+0987654321"]}
@@ -230,7 +236,13 @@ def test_sms_service_sync_send_message(hass, mock_twilio_client):
         mock_twilio_client, "+1234567890", hass, None
     )
     
-    with patch.object(hass, "async_create_task") as mock_create_task:
+    # Mock async_create_task to consume the coroutine without awaiting
+    def mock_create_task_impl(coro):
+        # Close the coroutine to prevent warning
+        coro.close()
+        return MagicMock()
+    
+    with patch.object(hass, "async_create_task", side_effect=mock_create_task_impl) as mock_create_task:
         service.send_message(
             "Test message",
             **{ATTR_TARGET: ["+0987654321"]}
