@@ -44,11 +44,6 @@ from .const import (
     DATA_TWILIO,
     DOMAIN,
     ATTR_MEDIAURL,
-    ATTR_CALL_SID,
-    ATTR_CALL_STATUS,
-    ATTR_FROM,
-    ATTR_TO,
-    EVENT_TWILIO_CALL_INITIATED,
     DEFAULT_TIMEOUT,
     DEFAULT_NUM_DIGITS,
     DEFAULT_FINISH_ON_KEY,
@@ -56,6 +51,7 @@ from .const import (
     DEFAULT_LANGUAGE,
     DEFAULT_TRANSCRIBE_LANGUAGE,
 )
+from .helper import make_call, make_simple_call
 
 _LOGGER = logging.getLogger(__name__)
 
