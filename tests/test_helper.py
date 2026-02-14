@@ -22,53 +22,54 @@ from custom_components.twilio.const import (
 
 
 @pytest.mark.unit
-def test_get_twilio_client_from_global(hass):
+def test_get_twilio_client_from_global(mock_hass_for_helper):
     """Test getting Twilio client from global data."""
     mock_client = MagicMock()
-    hass.data[DATA_TWILIO] = mock_client
+    mock_hass_for_helper.data[DATA_TWILIO] = mock_client
     
-    client = get_twilio_client(hass)
+    client = get_twilio_client(mock_hass_for_helper)
     assert client == mock_client
 
 
 @pytest.mark.unit
-def test_get_twilio_client_from_config_entry(hass):
+def test_get_twilio_client_from_config_entry(mock_hass_for_helper):
     """Test getting Twilio client from config entry data."""
     mock_client = MagicMock()
-    hass.data[DOMAIN] = {
+    mock_hass_for_helper.data[DOMAIN] = {
         "entry1": {
             DATA_TWILIO: mock_client,
         }
     }
     
-    client = get_twilio_client(hass)
-    assert client == mock_client
+    client = get_twilio_client(mock_hass_for_helper)
+    # The client should be returned directly, not wrapped
+    assert client is mock_client
 
 
 @pytest.mark.unit
-def test_get_twilio_client_not_found(hass):
+def test_get_twilio_client_not_found(mock_hass_for_helper):
     """Test getting Twilio client when not available."""
-    client = get_twilio_client(hass)
+    client = get_twilio_client(mock_hass_for_helper)
     assert client is None
 
 
 @pytest.mark.unit
-def test_get_webhook_url(hass):
+def test_get_webhook_url(mock_hass_for_helper):
     """Test getting webhook URL."""
-    hass.data[DOMAIN] = {
+    mock_hass_for_helper.data[DOMAIN] = {
         "entry1": {
             "webhook_url": "https://example.com/webhook",
         }
     }
     
-    url = get_webhook_url(hass)
+    url = get_webhook_url(mock_hass_for_helper)
     assert url == "https://example.com/webhook"
 
 
 @pytest.mark.unit
-def test_get_webhook_url_not_found(hass):
+def test_get_webhook_url_not_found(mock_hass_for_helper):
     """Test getting webhook URL when not available."""
-    url = get_webhook_url(hass)
+    url = get_webhook_url(mock_hass_for_helper)
     assert url is None
 
 
@@ -92,18 +93,18 @@ def test_generate_simple_twiml_url_with_url():
 
 
 @pytest.mark.unit
-def test_fire_call_initiated_event(hass):
+def test_fire_call_initiated_event(mock_hass_for_helper):
     """Test firing call initiated event."""
     call_sid = "CA123"
     to_number = "+1234567890"
     from_number = "+0987654321"
     call_status = "queued"
     
-    fire_call_initiated_event(hass, call_sid, to_number, from_number, call_status)
+    fire_call_initiated_event(mock_hass_for_helper, call_sid, to_number, from_number, call_status)
     
     # Check that event was fired
-    assert len(hass.bus.async_fire.call_args_list) > 0
-    call_args = hass.bus.async_fire.call_args
+    assert mock_hass_for_helper.bus.fire.called
+    call_args = mock_hass_for_helper.bus.fire.call_args
     assert call_args[0][0] == EVENT_TWILIO_CALL_INITIATED
     assert call_args[0][1][ATTR_CALL_SID] == call_sid
     assert call_args[0][1][ATTR_TO] == to_number
@@ -113,7 +114,7 @@ def test_fire_call_initiated_event(hass):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_make_call_success(hass, mock_twilio_client):
+async def test_make_call_success(mock_hass_for_helper, mock_twilio_client):
     """Test making a successful call."""
     to_number = "+1234567890"
     from_number = "+0987654321"
@@ -124,7 +125,7 @@ async def test_make_call_success(hass, mock_twilio_client):
         to_number=to_number,
         from_number=from_number,
         twiml_url=twiml_url,
-        hass=hass,
+        hass=mock_hass_for_helper,
     )
     
     assert result is not None
@@ -143,7 +144,7 @@ async def test_make_call_success(hass, mock_twilio_client):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_make_call_with_status_callback(hass, mock_twilio_client):
+async def test_make_call_with_status_callback(mock_hass_for_helper, mock_twilio_client):
     """Test making a call with status callback."""
     to_number = "+1234567890"
     from_number = "+0987654321"
@@ -155,7 +156,7 @@ async def test_make_call_with_status_callback(hass, mock_twilio_client):
         to_number=to_number,
         from_number=from_number,
         twiml_url=twiml_url,
-        hass=hass,
+        hass=mock_hass_for_helper,
         status_callback=status_callback,
         status_callback_method="POST",
     )
@@ -170,7 +171,7 @@ async def test_make_call_with_status_callback(hass, mock_twilio_client):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_make_call_failure(hass, mock_twilio_client):
+async def test_make_call_failure(mock_hass_for_helper, mock_twilio_client):
     """Test making a call that fails."""
     from twilio.base.exceptions import TwilioRestException
     
@@ -185,7 +186,7 @@ async def test_make_call_failure(hass, mock_twilio_client):
         to_number="+1234567890",
         from_number="+0987654321",
         twiml_url="https://example.com/twiml",
-        hass=hass,
+        hass=mock_hass_for_helper,
     )
     
     assert result is None
@@ -193,7 +194,7 @@ async def test_make_call_failure(hass, mock_twilio_client):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_make_simple_call(hass, mock_twilio_client):
+async def test_make_simple_call(mock_hass_for_helper, mock_twilio_client):
     """Test making a simple call with message."""
     to_number = "+1234567890"
     from_number = "+0987654321"
@@ -204,7 +205,7 @@ async def test_make_simple_call(hass, mock_twilio_client):
         to_number=to_number,
         from_number=from_number,
         message=message,
-        hass=hass,
+        hass=mock_hass_for_helper,
     )
     
     assert result is not None

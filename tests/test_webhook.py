@@ -20,10 +20,19 @@ from custom_components.twilio.const import (
 )
 
 
+def create_mock_hass():
+    """Create a properly mocked HomeAssistant instance."""
+    mock_hass = MagicMock()
+    mock_hass.bus = MagicMock()
+    mock_hass.bus.async_fire = MagicMock()
+    return mock_hass
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_handle_webhook_sms(hass):
+async def test_handle_webhook_sms():
     """Test handling SMS webhook."""
+    hass = create_mock_hass()
     webhook_id = "test_webhook"
     
     # Mock request
@@ -42,7 +51,7 @@ async def test_handle_webhook_sms(hass):
     assert response.content_type == "text/xml"
     
     # Verify event was fired
-    assert len(hass.bus.async_fire.call_args_list) >= 1
+    assert hass.bus.async_fire.called
     # Find the SMS event
     sms_event_fired = False
     for call in hass.bus.async_fire.call_args_list:
@@ -59,8 +68,9 @@ async def test_handle_webhook_sms(hass):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_handle_webhook_sms_with_media(hass):
+async def test_handle_webhook_sms_with_media():
     """Test handling SMS webhook with media."""
+    hass = create_mock_hass()
     webhook_id = "test_webhook"
     
     # Mock request
@@ -94,8 +104,9 @@ async def test_handle_webhook_sms_with_media(hass):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_handle_webhook_call_received(hass):
+async def test_handle_webhook_call_received():
     """Test handling call received webhook."""
+    hass = create_mock_hass()
     webhook_id = "test_webhook"
     
     # Mock request
@@ -128,8 +139,9 @@ async def test_handle_webhook_call_received(hass):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_handle_webhook_call_ended(hass):
+async def test_handle_webhook_call_ended():
     """Test handling call ended webhook."""
+    hass = create_mock_hass()
     webhook_id = "test_webhook"
     
     # Mock request
@@ -162,8 +174,9 @@ async def test_handle_webhook_call_ended(hass):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_handle_webhook_dtmf(hass):
+async def test_handle_webhook_dtmf():
     """Test handling DTMF webhook."""
+    hass = create_mock_hass()
     webhook_id = "test_webhook"
     
     # Mock request
@@ -193,8 +206,9 @@ async def test_handle_webhook_dtmf(hass):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_handle_webhook_transcription(hass):
+async def test_handle_webhook_transcription():
     """Test handling transcription webhook."""
+    hass = create_mock_hass()
     webhook_id = "test_webhook"
     
     # Mock request
@@ -225,8 +239,9 @@ async def test_handle_webhook_transcription(hass):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_handle_webhook_error(hass):
+async def test_handle_webhook_error():
     """Test handling webhook with error."""
+    hass = create_mock_hass()
     webhook_id = "test_webhook"
     
     # Mock request that raises an error

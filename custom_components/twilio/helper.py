@@ -26,15 +26,18 @@ def get_twilio_client(hass: HomeAssistant) -> Client | None:
     """Get Twilio client from hass.data."""
     from .const import DATA_TWILIO, DOMAIN
     
-    # Try global data first (for legacy YAML config)
+    # Check if DOMAIN/DATA_TWILIO key exists
     if DATA_TWILIO in hass.data:
-        return hass.data[DATA_TWILIO]
-    
-    # Try config entry data
-    if DOMAIN in hass.data:
-        for entry_data in hass.data[DOMAIN].values():
-            if isinstance(entry_data, dict) and DATA_TWILIO in entry_data:
-                return entry_data[DATA_TWILIO]
+        data = hass.data[DATA_TWILIO]
+        
+        # If it's a dict, it's config entry structure - iterate through entries
+        if isinstance(data, dict):
+            for entry_data in data.values():
+                if isinstance(entry_data, dict) and DATA_TWILIO in entry_data:
+                    return entry_data[DATA_TWILIO]
+        else:
+            # It's the client itself (legacy YAML config)
+            return data
     
     _LOGGER.error("Twilio client not found in hass.data")
     return None
@@ -45,9 +48,12 @@ def get_webhook_url(hass: HomeAssistant) -> str | None:
     from .const import DOMAIN
     
     if DOMAIN in hass.data:
-        for entry_data in hass.data[DOMAIN].values():
-            if isinstance(entry_data, dict) and "webhook_url" in entry_data:
-                return entry_data["webhook_url"]
+        data = hass.data[DOMAIN]
+        # Only look for webhook_url in config entry structure (dict)
+        if isinstance(data, dict):
+            for entry_data in data.values():
+                if isinstance(entry_data, dict) and "webhook_url" in entry_data:
+                    return entry_data["webhook_url"]
     
     return None
 

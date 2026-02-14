@@ -65,9 +65,18 @@ async def test_async_setup_with_config(mock_client_class, mock_http_client_class
 @patch("custom_components.twilio.AsyncTwilioHttpClient")
 @patch("custom_components.twilio.Client")
 async def test_async_setup_entry(
-    mock_client_class, mock_http_client_class, mock_webhook, hass
+    mock_client_class, mock_http_client_class, mock_webhook
 ):
     """Test config entry setup."""
+    # Create a proper mock hass
+    mock_hass = MagicMock()
+    mock_hass.data = {}
+    mock_hass.bus = MagicMock()
+    mock_hass.services = MagicMock()
+    mock_hass.services.async_register = MagicMock()
+    mock_hass.config_entries = MagicMock()
+    mock_hass.config_entries.async_forward_entry_setups = AsyncMock()
+    
     entry_data = {
         CONF_ACCOUNT_SID: "ACtest123",
         CONF_AUTH_TOKEN: "test_token",
@@ -85,21 +94,19 @@ async def test_async_setup_entry(
     
     mock_webhook.async_generate_url.return_value = "https://example.com/webhook"
     
-    # Mock platform setup
-    with patch.object(hass.config_entries, "async_forward_entry_setups", AsyncMock()):
-        result = await async_setup_entry(hass, mock_entry)
+    result = await async_setup_entry(mock_hass, mock_entry)
     
     assert result is True
-    assert DOMAIN in hass.data
-    assert mock_entry.entry_id in hass.data[DOMAIN]
-    assert DATA_TWILIO in hass.data[DOMAIN][mock_entry.entry_id]
+    assert DOMAIN in mock_hass.data
+    assert mock_entry.entry_id in mock_hass.data[DOMAIN]
+    assert DATA_TWILIO in mock_hass.data[DOMAIN][mock_entry.entry_id]
     
     # Verify webhook was registered
     mock_webhook.async_register.assert_called_once()
     
     # Verify services were registered
-    assert hass.services.async_register.called
-    service_calls = hass.services.async_register.call_args_list
+    assert mock_hass.services.async_register.called
+    service_calls = mock_hass.services.async_register.call_args_list
     service_names = [call[0][1] for call in service_calls]
     assert SERVICE_MAKE_CALL in service_names
     assert SERVICE_SEND_DTMF in service_names
@@ -110,8 +117,16 @@ async def test_async_setup_entry(
 @pytest.mark.unit
 @pytest.mark.asyncio
 @patch("custom_components.twilio.webhook_component")
-async def test_async_unload_entry(mock_webhook, hass):
+async def test_async_unload_entry(mock_webhook):
     """Test config entry unload."""
+    # Create a proper mock hass
+    mock_hass = MagicMock()
+    mock_hass.data = {DOMAIN: {}}
+    mock_hass.services = MagicMock()
+    mock_hass.services.async_remove = MagicMock()
+    mock_hass.config_entries = MagicMock()
+    mock_hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
+    
     entry_data = {
         CONF_ACCOUNT_SID: "ACtest123",
         CONF_AUTH_TOKEN: "test_token",
@@ -123,7 +138,7 @@ async def test_async_unload_entry(mock_webhook, hass):
     mock_entry.entry_id = "test_entry"
     
     # Setup data
-    hass.data[DOMAIN] = {
+    mock_hass.data[DOMAIN] = {
         mock_entry.entry_id: {
             DATA_TWILIO: MagicMock(),
             "webhook_id": "test_webhook",
@@ -131,29 +146,33 @@ async def test_async_unload_entry(mock_webhook, hass):
         "_services_registered": True,
     }
     
-    # Mock platform unload
-    with patch.object(
-        hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
-    ):
-        result = await async_unload_entry(hass, mock_entry)
+    result = await async_unload_entry(mock_hass, mock_entry)
     
     assert result is True
     
     # Verify webhook was unregistered
-    mock_webhook.async_unregister.assert_called_once_with(hass, "test_webhook")
+    mock_webhook.async_unregister.assert_called_once_with(mock_hass, "test_webhook")
     
     # Verify data was removed
-    assert mock_entry.entry_id not in hass.data[DOMAIN]
+    assert mock_entry.entry_id not in mock_hass.data[DOMAIN]
     
     # Verify services were unregistered (when it's the last entry)
-    assert hass.services.async_remove.called
+    assert mock_hass.services.async_remove.called
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 @patch("custom_components.twilio.webhook_component")
-async def test_async_unload_entry_with_remaining_entries(mock_webhook, hass):
+async def test_async_unload_entry_with_remaining_entries(mock_webhook):
     """Test config entry unload with other entries remaining."""
+    # Create a proper mock hass
+    mock_hass = MagicMock()
+    mock_hass.data = {DOMAIN: {}}
+    mock_hass.services = MagicMock()
+    mock_hass.services.async_remove = MagicMock()
+    mock_hass.config_entries = MagicMock()
+    mock_hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
+    
     entry_data = {
         CONF_ACCOUNT_SID: "ACtest123",
         CONF_AUTH_TOKEN: "test_token",
@@ -165,7 +184,7 @@ async def test_async_unload_entry_with_remaining_entries(mock_webhook, hass):
     mock_entry.entry_id = "test_entry"
     
     # Setup data with multiple entries
-    hass.data[DOMAIN] = {
+    mock_hass.data[DOMAIN] = {
         mock_entry.entry_id: {
             DATA_TWILIO: MagicMock(),
             "webhook_id": "test_webhook",
@@ -177,11 +196,7 @@ async def test_async_unload_entry_with_remaining_entries(mock_webhook, hass):
         "_services_registered": True,
     }
     
-    # Mock platform unload
-    with patch.object(
-        hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
-    ):
-        result = await async_unload_entry(hass, mock_entry)
+    result = await async_unload_entry(mock_hass, mock_entry)
     
     assert result is True
     
@@ -189,8 +204,8 @@ async def test_async_unload_entry_with_remaining_entries(mock_webhook, hass):
     mock_webhook.async_unregister.assert_called_once()
     
     # Verify only the specific entry was removed
-    assert mock_entry.entry_id not in hass.data[DOMAIN]
-    assert "another_entry" in hass.data[DOMAIN]
+    assert mock_entry.entry_id not in mock_hass.data[DOMAIN]
+    assert "another_entry" in mock_hass.data[DOMAIN]
     
     # Verify services were NOT unregistered (other entries remain)
-    assert not hass.services.async_remove.called
+    assert not mock_hass.services.async_remove.called

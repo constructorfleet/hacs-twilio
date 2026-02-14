@@ -29,13 +29,10 @@ def mock_twilio_client():
     mock_call.status = "queued"
     client.calls.create_async.return_value = mock_call
     
-    # Mock call update
-    def mock_calls_getter(call_sid):
-        call_resource = MagicMock()
-        call_resource.update_async = AsyncMock()
-        return call_resource
-    
-    client.calls.side_effect = mock_calls_getter
+    # Mock call update - set up the calls() method to return a mock with update_async
+    mock_call_resource = MagicMock()
+    mock_call_resource.update_async = AsyncMock(return_value=MagicMock())
+    client.calls.return_value = mock_call_resource
     
     # Mock messages resource
     client.messages = MagicMock()
@@ -63,6 +60,10 @@ def mock_config_entry():
 @pytest.fixture
 async def hass_with_twilio(hass: HomeAssistant, mock_twilio_client, mock_config_entry):
     """Set up Home Assistant with Twilio integration."""
+    # Mock the services registry
+    hass.services.async_register = MagicMock()
+    hass.services.async_remove = MagicMock()
+    
     # Store mock client in hass.data
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["test_entry"] = {
@@ -72,6 +73,16 @@ async def hass_with_twilio(hass: HomeAssistant, mock_twilio_client, mock_config_
     }
     
     return hass
+
+
+@pytest.fixture
+def mock_hass_for_helper():
+    """Create a mock HomeAssistant instance for helper tests."""
+    mock_hass = MagicMock()
+    mock_hass.data = {}
+    mock_hass.bus = MagicMock()
+    mock_hass.bus.fire = MagicMock()
+    return mock_hass
 
 
 @pytest.fixture
