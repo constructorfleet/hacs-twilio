@@ -87,7 +87,7 @@ def fire_call_initiated_event(
     _LOGGER.debug("Fired call initiated event for SID %s", call_sid)
 
 
-def make_call(
+async def make_call(
     client: Client,
     to_number: str,
     from_number: str,
@@ -99,7 +99,7 @@ def make_call(
     """Make a Twilio call with the given parameters.
     
     Args:
-        client: Twilio client instance
+        client: Twilio client instance (with AsyncTwilioHttpClient)
         to_number: Destination phone number
         from_number: Source phone number (must be a Twilio number)
         twiml_url: URL that returns TwiML instructions
@@ -127,7 +127,8 @@ def make_call(
             call_args["status_callback_method"] = "POST"
     
     try:
-        call = client.calls.create(**call_args)
+        # Twilio client with AsyncTwilioHttpClient returns awaitable
+        call = await client.calls.create_async(**call_args)
         
         # Fire event if hass is available
         if hass:
@@ -149,7 +150,7 @@ def make_call(
         return None
 
 
-def make_simple_call(
+async def make_simple_call(
     client: Client,
     to_number: str,
     from_number: str,
@@ -163,7 +164,7 @@ def make_simple_call(
     This is a convenience function that generates a TwiML URL and makes the call.
     
     Args:
-        client: Twilio client instance
+        client: Twilio client instance (with AsyncTwilioHttpClient)
         to_number: Destination phone number
         from_number: Source phone number (must be a Twilio number)
         message: Message to speak or URL to TwiML
@@ -176,7 +177,7 @@ def make_simple_call(
     """
     twiml_url = generate_simple_twiml_url(message)
     
-    return make_call(
+    return await make_call(
         client=client,
         to_number=to_number,
         from_number=from_number,

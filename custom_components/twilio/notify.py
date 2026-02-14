@@ -259,31 +259,43 @@ class TwilioCallNotificationService(BaseNotificationService):
         data = kwargs.get(ATTR_DATA) or {}
         call_type = data.get(ATTR_CALL_TYPE, CALL_TYPE_SIMPLE)
 
-        for target in targets:
-            try:
-                if call_type == CALL_TYPE_TWIML:
-                    # Use custom TwiML URL
-                    twiml_url = data.get(ATTR_TWIML_URL)
-                    if not twiml_url:
-                        _LOGGER.error("TwiML URL required for twiml call type")
-                        continue
-                    self._make_twiml_call(target, twiml_url, data)
+        # Schedule async calls for each target
+        if self.hass:
+            for target in targets:
+                self.hass.async_create_task(
+                    self._async_make_call(target, message, call_type, data)
+                )
+        else:
+            _LOGGER.error("Cannot make calls: HomeAssistant instance not available")
 
-                elif call_type == CALL_TYPE_INTERACTIVE:
-                    # Generate interactive TwiML with gather, record, transcribe
-                    twiml_url = self._generate_interactive_twiml_url(message, data)
-                    self._make_twiml_call(target, twiml_url, data)
+    async def _async_make_call(
+        self, target: str, message: str, call_type: str, data: dict[str, Any]
+    ) -> None:
+        """Make a call asynchronously."""
+        try:
+            if call_type == CALL_TYPE_TWIML:
+                # Use custom TwiML URL
+                twiml_url = data.get(ATTR_TWIML_URL)
+                if not twiml_url:
+                    _LOGGER.error("TwiML URL required for twiml call type")
+                    return
+                await self._make_twiml_call(target, twiml_url, data)
 
-                else:
-                    # Simple message call using Twimlet
-                    self._make_simple_call(target, message, data)
+            elif call_type == CALL_TYPE_INTERACTIVE:
+                # Generate interactive TwiML with gather, record, transcribe
+                twiml_url = self._generate_interactive_twiml_url(message, data)
+                await self._make_twiml_call(target, twiml_url, data)
 
-                _LOGGER.debug("Call initiated to %s", target)
+            else:
+                # Simple message call using Twimlet
+                await self._make_simple_call(target, message, data)
 
-            except TwilioRestException as exc:
-                _LOGGER.error("Failed to initiate call to %s: %s", target, exc)
+            _LOGGER.debug("Call initiated to %s", target)
 
-    def _make_simple_call(self, target: str, message: str, data: dict[str, Any]) -> None:
+        except TwilioRestException as exc:
+            _LOGGER.error("Failed to initiate call to %s: %s", target, exc)
+
+    async def _make_simple_call(self, target: str, message: str, data: dict[str, Any]) -> None:
         """Make a simple call with a message.
 
         Note: This method uses Twimlets, which is a legacy Twilio service.
@@ -298,7 +310,7 @@ class TwilioCallNotificationService(BaseNotificationService):
             status_callback_method = data.get(ATTR_STATUS_CALLBACK_METHOD, "POST")
         
         # Use helper function to make the call
-        make_simple_call(
+        await make_simple_call(
             client=self.client,
             to_number=target,
             from_number=self.from_number,
@@ -308,7 +320,7 @@ class TwilioCallNotificationService(BaseNotificationService):
             status_callback_method=status_callback_method,
         )
 
-    def _make_twiml_call(self, target: str, twiml_url: str, data: dict[str, Any]) -> None:
+    async def _make_twiml_call(self, target: str, twiml_url: str, data: dict[str, Any]) -> None:
         """Make a call with custom TwiML."""
         # Determine status callback settings
         status_callback = None
@@ -319,7 +331,7 @@ class TwilioCallNotificationService(BaseNotificationService):
             status_callback_method = data.get(ATTR_STATUS_CALLBACK_METHOD, "POST")
         
         # Use helper function to make the call
-        make_call(
+        await make_call(
             client=self.client,
             to_number=target,
             from_number=self.from_number,

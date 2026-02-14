@@ -50,13 +50,11 @@ async def async_make_call(hass: HomeAssistant, call: ServiceCall) -> ServiceResp
         # Create simple TwiML for the message
         twiml_url = generate_simple_twiml_url(message)
 
-        # Make the call
-        twilio_call = await hass.async_add_executor_job(
-            lambda: client.calls.create(
-                to=to_number,
-                from_=from_number,
-                url=twiml_url,
-            )
+        # Make the call using async Twilio client
+        twilio_call = await client.calls.create_async(
+            to=to_number,
+            from_=from_number,
+            url=twiml_url,
         )
 
         call_sid = twilio_call.sid
@@ -114,10 +112,8 @@ async def async_send_dtmf(hass: HomeAssistant, call: ServiceCall) -> None:
         twiml_str = str(twiml)
         twiml_url = f"https://twimlets.com/echo?Twiml={urllib.parse.quote(twiml_str)}"
 
-        # Update the call with the new TwiML
-        await hass.async_add_executor_job(
-            lambda: client.calls(call_sid).update(url=twiml_url, method="POST")
-        )
+        # Update the call with the new TwiML using async client
+        await client.calls(call_sid).update_async(url=twiml_url, method="POST")
         _LOGGER.info("Sent DTMF digits '%s' to call %s", digits, call_sid)
     except Exception as err:
         _LOGGER.error("Failed to send DTMF digits to call %s: %s", call_sid, err)
@@ -170,10 +166,8 @@ async def async_start_recording(hass: HomeAssistant, call: ServiceCall) -> None:
         twiml_str = str(twiml)
         twiml_url = f"https://twimlets.com/echo?Twiml={urllib.parse.quote(twiml_str)}"
 
-        # Update the call with the new TwiML
-        await hass.async_add_executor_job(
-            lambda: client.calls(call_sid).update(url=twiml_url, method="POST")
-        )
+        # Update the call with the new TwiML using async client
+        await client.calls(call_sid).update_async(url=twiml_url, method="POST")
         _LOGGER.info("Started recording for call %s", call_sid)
     except Exception as err:
         _LOGGER.error("Failed to start recording for call %s: %s", call_sid, err)
@@ -203,10 +197,8 @@ async def async_pause_call(hass: HomeAssistant, call: ServiceCall) -> None:
         twiml_str = str(twiml)
         twiml_url = f"https://twimlets.com/echo?Twiml={urllib.parse.quote(twiml_str)}"
 
-        # Update the call with the new TwiML
-        await hass.async_add_executor_job(
-            lambda: client.calls(call_sid).update(url=twiml_url, method="POST")
-        )
+        # Update the call with the new TwiML using async client
+        await client.calls(call_sid).update_async(url=twiml_url, method="POST")
         _LOGGER.info("Paused call %s for %s seconds", call_sid, length)
     except Exception as err:
         _LOGGER.error("Failed to pause call %s: %s", call_sid, err)

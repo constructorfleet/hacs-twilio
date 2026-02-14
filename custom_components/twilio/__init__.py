@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from twilio.rest import Client
+from twilio.http.async_http_client import AsyncTwilioHttpClient
 import voluptuous as vol
 
 from homeassistant.components import webhook as webhook_component
@@ -59,8 +60,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         return True
 
     conf = config[DOMAIN]
+    # Create async HTTP client for Twilio
+    http_client = AsyncTwilioHttpClient()
     hass.data[DATA_TWILIO] = Client(
-        conf.get(CONF_ACCOUNT_SID), conf.get(CONF_AUTH_TOKEN)
+        conf.get(CONF_ACCOUNT_SID), 
+        conf.get(CONF_AUTH_TOKEN),
+        http_client=http_client
     )
     return True
 
@@ -76,10 +81,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Store Twilio client and webhook info in hass.data
     hass.data.setdefault(DOMAIN, {})
+    # Create async HTTP client for Twilio
+    http_client = AsyncTwilioHttpClient()
     hass.data[DOMAIN][entry.entry_id] = {
         DATA_TWILIO: Client(
             entry.data[CONF_ACCOUNT_SID],
             entry.data[CONF_AUTH_TOKEN],
+            http_client=http_client
         ),
         "webhook_id": webhook_id,
         "webhook_url": webhook_url,
