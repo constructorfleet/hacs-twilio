@@ -170,11 +170,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(async_options_updated))
 
     if not hass.data[DOMAIN].get(_SERVICES_REGISTERED):
+        async def _handle_make_call(call):
+            return await async_make_call(hass, call)
+
+        async def _handle_send_mms(call):
+            return await async_send_mms(hass, call)
+
+        async def _handle_send_dtmf(call):
+            await async_send_dtmf(hass, call)
+
+        async def _handle_start_recording(call):
+            await async_start_recording(hass, call)
+
+        async def _handle_pause(call):
+            await async_pause_call(hass, call)
+
         # Register services once for the integration domain.
         hass.services.async_register(
             DOMAIN,
             SERVICE_MAKE_CALL,
-            lambda call: async_make_call(hass, call),
+            _handle_make_call,
             schema=vol.Schema(
                 {
                     vol.Required("to"): cv.string,
@@ -198,7 +213,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(
             DOMAIN,
             SERVICE_SEND_MMS,
-            lambda call: async_send_mms(hass, call),
+            _handle_send_mms,
             schema=vol.Schema(
                 {
                     vol.Required("to"): cv.string,
@@ -216,7 +231,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(
             DOMAIN,
             SERVICE_SEND_DTMF,
-            lambda call: async_send_dtmf(hass, call),
+            _handle_send_dtmf,
             schema=vol.Schema(
                 {
                     vol.Required(ATTR_CALL_SID): cv.string,
@@ -228,7 +243,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(
             DOMAIN,
             SERVICE_START_RECORDING,
-            lambda call: async_start_recording(hass, call),
+            _handle_start_recording,
             schema=vol.Schema(
                 {
                     vol.Required(ATTR_CALL_SID): cv.string,
@@ -247,7 +262,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(
             DOMAIN,
             SERVICE_PAUSE,
-            lambda call: async_pause_call(hass, call),
+            _handle_pause,
             schema=vol.Schema(
                 {
                     vol.Required(ATTR_CALL_SID): cv.string,
