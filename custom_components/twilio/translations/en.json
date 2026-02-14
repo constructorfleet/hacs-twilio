@@ -18,7 +18,11 @@
             },
             "targets": {
                 "title": "Target Mapping",
-                "description": "Configure SMS and call targets for each selected Twilio number. Enter one target per line or comma-separated."
+                "description": "Configure SMS and call targets for Twilio number {phone_number}. Enter one target per line or comma-separated.",
+                "data": {
+                    "sms_targets": "SMS Targets",
+                    "call_targets": "Call Targets"
+                }
             }
         },
         "error": {
@@ -46,7 +50,11 @@
             },
             "targets": {
                 "title": "Target Mapping",
-                "description": "Configure SMS and call targets for each selected Twilio number. Enter one target per line or comma-separated."
+                "description": "Configure SMS and call targets for Twilio number {phone_number}. Enter one target per line or comma-separated.",
+                "data": {
+                    "sms_targets": "SMS Targets",
+                    "call_targets": "Call Targets"
+                }
             }
         }
     },

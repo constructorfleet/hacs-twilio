@@ -150,6 +150,7 @@ async def test_sms_entity_send_mms(hass, mock_twilio_client):
 
     await entity.async_send_message(
         "Test message",
+        "Test title",
         **{
             ATTR_DATA: {ATTR_MEDIAURL: ["https://example.com/image.jpg"]},
         },
@@ -220,6 +221,7 @@ async def test_sms_entity_send_mms_camera_entity(hass, mock_twilio_client, tmp_p
     ):
         await entity.async_send_message(
             "Camera snapshot",
+            "Message Title",
             **{
                 ATTR_DATA: {
                     ATTR_CAMERA_ENTITY: "camera.front_door",
@@ -267,6 +269,7 @@ async def test_sms_entity_send_mms_image_entity(hass, mock_twilio_client, tmp_pa
     ):
         await entity.async_send_message(
             "Image snapshot",
+            "Message Title",
             **{
                 ATTR_DATA: {
                     ATTR_IMAGE_ENTITY: "image.front_door",
@@ -315,6 +318,7 @@ async def test_sms_entity_send_mms_image_path_from_www(
 
     await entity.async_send_message(
         "File snapshot",
+        "Message Title",
         **{
             ATTR_DATA: {
                 ATTR_IMAGE_PATH: str(image_file),
@@ -352,6 +356,7 @@ async def test_sms_entity_send_mms_image_path_too_large(
 
     await entity.async_send_message(
         "Oversized file",
+        "Message Title",
         **{
             ATTR_DATA: {
                 ATTR_IMAGE_PATH: str(image_file),
@@ -380,6 +385,7 @@ async def test_sms_entity_attachment_without_external_url_logs_warning(
 
     await entity.async_send_message(
         "No external URL",
+        "Message Title",
         **{
             ATTR_DATA: {
                 ATTR_CAMERA_ENTITY: "camera.front_door",
@@ -396,7 +402,9 @@ async def test_sms_entity_attachment_without_external_url_logs_warning(
 @pytest.mark.asyncio
 async def test_call_entity_async_make_call_simple(hass, mock_twilio_client):
     """Test making a simple call async."""
-    entity = TwilioCallNotificationEntity(mock_twilio_client, "+1234567890", "+14155550123")
+    entity = TwilioCallNotificationEntity(
+        mock_twilio_client, "+1234567890", "+14155550123"
+    )
     entity.hass = hass
 
     await entity._async_make_call("+14155550123", "Hello world", "simple", {})
@@ -411,7 +419,9 @@ async def test_call_entity_async_make_call_simple(hass, mock_twilio_client):
 @pytest.mark.asyncio
 async def test_call_entity_async_make_call_twiml(hass, mock_twilio_client):
     """Test making a call with custom TwiML URL."""
-    entity = TwilioCallNotificationEntity(mock_twilio_client, "+1234567890", "+14155550123")
+    entity = TwilioCallNotificationEntity(
+        mock_twilio_client, "+1234567890", "+14155550123"
+    )
     entity.hass = hass
 
     await entity._async_make_call(
