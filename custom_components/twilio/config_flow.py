@@ -107,25 +107,32 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_import(
-        self, user_input: dict[str, Any] | None = None
+        self, import_config: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Import config from configuration.yaml."""
-        if user_input is None:
+        if import_config is None or not (
+            await validate_input(self.hass, import_config)
+        ):
             return self.async_abort(reason="invalid_import")
 
-        account_sid = user_input[CONF_ACCOUNT_SID]
+        account_sid = import_config[CONF_ACCOUNT_SID]
+        _LOGGER.error("Importing Twilio config")
+        _LOGGER.error(import_config)
 
         for entry in self._async_current_entries():
             if entry.data.get(CONF_ACCOUNT_SID) == account_sid:
                 self.hass.config_entries.async_update_entry(
                     entry,
-                    data={**entry.data, CONF_AUTH_TOKEN: user_input[CONF_AUTH_TOKEN]},
+                    data={
+                        **entry.data,
+                        CONF_AUTH_TOKEN: import_config[CONF_AUTH_TOKEN],
+                    },
                 )
                 return self.async_abort(reason="already_configured")
 
         await self.async_set_unique_id(account_sid)
         self._abort_if_unique_id_configured(
-            updates={CONF_AUTH_TOKEN: user_input[CONF_AUTH_TOKEN]}
+            updates={CONF_AUTH_TOKEN: import_config[CONF_AUTH_TOKEN]}
         )
 
         webhook_id = webhook.async_generate_id()
@@ -135,7 +142,7 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             title="Twilio",
             data={
                 CONF_ACCOUNT_SID: account_sid,
-                CONF_AUTH_TOKEN: user_input[CONF_AUTH_TOKEN],
+                CONF_AUTH_TOKEN: import_config[CONF_AUTH_TOKEN],
                 CONF_WEBHOOK_ID: webhook_id,
             },
             description_placeholders={"webhook_url": webhook_url},
