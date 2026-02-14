@@ -19,6 +19,12 @@ from homeassistant.helpers.typing import ConfigType
 from .const import (
     CONF_ACCOUNT_SID,
     CONF_AUTH_TOKEN,
+    CONF_CALL_TARGETS,
+    CONF_CALL_TARGETS_BY_NUMBER,
+    CONF_FROM_NUMBER,
+    CONF_PHONE_NUMBERS,
+    CONF_SMS_TARGETS,
+    CONF_SMS_TARGETS_BY_NUMBER,
     DEFAULT_TRANSCRIBE_LANGUAGE,
     DATA_TWILIO,
     DOMAIN,
@@ -71,6 +77,65 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 },
             ),
         )
+    return True
+
+
+def _normalize_option_list(value: object) -> list[str]:
+    """Normalize list options into a list of non-empty strings."""
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate old config entry options to the latest schema."""
+    _LOGGER.debug("Migrating Twilio config entry from version %s", entry.version)
+
+    if entry.version > 2:
+        _LOGGER.error(
+            "Cannot migrate Twilio config entry with unsupported version %s",
+            entry.version,
+        )
+        return False
+
+    if entry.version == 1:
+        options = dict(entry.options)
+
+        phone_numbers = _normalize_option_list(options.get(CONF_PHONE_NUMBERS))
+        if not phone_numbers:
+            fallback_number = options.get(CONF_FROM_NUMBER, "")
+            if isinstance(fallback_number, str) and fallback_number.strip():
+                phone_numbers = [fallback_number.strip()]
+
+        sms_targets = _normalize_option_list(options.get(CONF_SMS_TARGETS))
+        call_targets = _normalize_option_list(options.get(CONF_CALL_TARGETS))
+        sms_targets_by_number = options.get(CONF_SMS_TARGETS_BY_NUMBER, {})
+        if not isinstance(sms_targets_by_number, dict):
+            sms_targets_by_number = {}
+        call_targets_by_number = options.get(CONF_CALL_TARGETS_BY_NUMBER, {})
+        if not isinstance(call_targets_by_number, dict):
+            call_targets_by_number = {}
+
+        migrated_sms_targets_by_number: dict[str, list[str]] = {}
+        migrated_call_targets_by_number: dict[str, list[str]] = {}
+        for number in phone_numbers:
+            migrated_sms_targets_by_number[number] = _normalize_option_list(
+                sms_targets_by_number.get(number, sms_targets)
+            )
+            migrated_call_targets_by_number[number] = _normalize_option_list(
+                call_targets_by_number.get(number, call_targets)
+            )
+
+        options[CONF_PHONE_NUMBERS] = phone_numbers
+        options[CONF_FROM_NUMBER] = phone_numbers[0] if phone_numbers else ""
+        options[CONF_SMS_TARGETS] = sms_targets
+        options[CONF_CALL_TARGETS] = call_targets
+        options[CONF_SMS_TARGETS_BY_NUMBER] = migrated_sms_targets_by_number
+        options[CONF_CALL_TARGETS_BY_NUMBER] = migrated_call_targets_by_number
+
+        hass.config_entries.async_update_entry(entry, options=options, version=2)
+
+    _LOGGER.info("Twilio config entry migration to version %s successful", entry.version)
     return True
 
 

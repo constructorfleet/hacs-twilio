@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import re
 import time
 from typing import Any, cast
 import urllib.parse
@@ -12,16 +13,19 @@ from twilio.base.exceptions import TwilioRestException
 from twilio.twiml.voice_response import Gather, Start, VoiceResponse
 
 from homeassistant.components.notify import NotifyEntity
-from homeassistant.components.notify.const import ATTR_DATA, ATTR_TARGET
+from homeassistant.components.notify.const import ATTR_DATA
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     ATTR_MEDIAURL,
     CONF_AUTOMATIC_PUNCTUATION,
+    CONF_CALL_TARGETS,
+    CONF_CALL_TARGETS_BY_NUMBER,
     CONF_FINISH_ON_KEY,
     CONF_FROM_NUMBER,
     CONF_LANGUAGE,
@@ -30,6 +34,8 @@ from .const import (
     CONF_PHONE_NUMBERS,
     CONF_PHRASE_MAPPINGS,
     CONF_PROFANITY_FILTER,
+    CONF_SMS_TARGETS,
+    CONF_SMS_TARGETS_BY_NUMBER,
     CONF_TIMEOUT,
     CONF_TRANSCRIBE_LANGUAGE,
     CONF_VOICE,
@@ -65,6 +71,8 @@ ATTR_IMAGE_PATH = "image_path"
 CALL_TYPE_SIMPLE = "simple"
 CALL_TYPE_TWIML = "twiml"
 CALL_TYPE_INTERACTIVE = "interactive"
+PHONE_PATTERN = re.compile(r"^\+[1-9]\d{1,14}$")
+ISSUE_ID_MISSING_TARGET_MAPPING = "missing_target_mapping"
 
 
 async def async_setup_entry(
@@ -88,6 +96,22 @@ async def async_setup_entry(
     configured_numbers = [
         str(number).strip() for number in configured_numbers if str(number).strip()
     ]
+    sms_targets = options.get(CONF_SMS_TARGETS, [])
+    if not isinstance(sms_targets, list):
+        sms_targets = []
+    sms_targets = [str(target).strip() for target in sms_targets if str(target).strip()]
+    call_targets = options.get(CONF_CALL_TARGETS, [])
+    if not isinstance(call_targets, list):
+        call_targets = []
+    call_targets = [
+        str(target).strip() for target in call_targets if str(target).strip()
+    ]
+    sms_targets_by_number = options.get(CONF_SMS_TARGETS_BY_NUMBER, {})
+    if not isinstance(sms_targets_by_number, dict):
+        sms_targets_by_number = {}
+    call_targets_by_number = options.get(CONF_CALL_TARGETS_BY_NUMBER, {})
+    if not isinstance(call_targets_by_number, dict):
+        call_targets_by_number = {}
 
     # Backward compatibility for installs that still have single from_number option.
     if not configured_numbers:
@@ -105,27 +129,71 @@ async def async_setup_entry(
     if not isinstance(phrase_mappings, dict):
         phrase_mappings = {}
 
+    missing_mappings: list[str] = []
     entities: list[NotifyEntity] = []
     for number in configured_numbers:
-        entities.extend(
-            [
+        number_sms_targets = sms_targets_by_number.get(number, sms_targets)
+        if not isinstance(number_sms_targets, list):
+            number_sms_targets = sms_targets
+        number_sms_targets = [
+            str(target).strip() for target in number_sms_targets if str(target).strip()
+        ]
+        number_call_targets = call_targets_by_number.get(number, call_targets)
+        if not isinstance(number_call_targets, list):
+            number_call_targets = call_targets
+        number_call_targets = [
+            str(target).strip()
+            for target in number_call_targets
+            if str(target).strip()
+        ]
+
+        if not number_sms_targets and not number_call_targets:
+            missing_mappings.append(number)
+
+        for target in number_sms_targets:
+            entities.append(
                 TwilioSMSNotificationEntity(
                     twilio_client=twilio_client,
                     from_number=number,
+                    target_number=target,
                     webhook_url=webhook_url,
                     entry_id=entry.entry_id,
-                ),
+                )
+            )
+        for target in number_call_targets:
+            entities.append(
                 TwilioCallNotificationEntity(
                     twilio_client=twilio_client,
                     from_number=number,
+                    target_number=target,
                     voice=voice,
                     language=language,
                     phrase_mappings=phrase_mappings,
                     webhook_url=webhook_url,
                     entry_id=entry.entry_id,
-                ),
-            ]
+                )
+            )
+
+    issue_id = f"{ISSUE_ID_MISSING_TARGET_MAPPING}_{entry.entry_id}"
+    if missing_mappings:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=True,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_ID_MISSING_TARGET_MAPPING,
+            translation_placeholders={"numbers": ", ".join(missing_mappings)},
         )
+    else:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+    if not entities:
+        _LOGGER.warning(
+            "Skipping Twilio notify setup: no target phone numbers configured for SMS or Call"
+        )
+        return
 
     async_add_entities(entities)
 
@@ -133,6 +201,11 @@ async def async_setup_entry(
 def _phone_number_key(phone_number: str) -> str:
     """Normalize phone number for ids."""
     return "".join(char for char in phone_number if char.isalnum())
+
+
+def _is_valid_target_phone_number(value: str) -> bool:
+    """Return True if target looks like a valid E.164 phone number."""
+    return bool(PHONE_PATTERN.match(value.strip()))
 
 
 class TwilioSMSNotificationEntity(NotifyEntity):
@@ -144,21 +217,26 @@ class TwilioSMSNotificationEntity(NotifyEntity):
         self,
         twilio_client: Any,
         from_number: str,
+        target_number: str,
         webhook_url: str | None,
         entry_id: str,
     ) -> None:
         """Initialize the entity."""
         self.client = twilio_client
         self.from_number = from_number
+        self.target_number = target_number
         self.webhook_url = webhook_url
-        self._attr_unique_id = f"{entry_id}_twilio_sms_{_phone_number_key(from_number)}"
-        self._attr_name = f"Twilio SMS {from_number}"
+        self._attr_unique_id = (
+            f"{entry_id}_twilio_sms_{_phone_number_key(from_number)}_{_phone_number_key(target_number)}"
+        )
+        self._attr_name = f"Twilio SMS {from_number} to {target_number}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"{entry_id}_{_phone_number_key(from_number)}")},
             "name": f"Twilio {from_number}",
             "manufacturer": "Twilio",
             "model": "Phone Number",
         }
+        self._attr_icon = "mdi:message-text-fast"
 
     def _get_external_base_url(self) -> str | None:
         """Return configured Home Assistant external URL, if available."""
@@ -267,7 +345,7 @@ class TwilioSMSNotificationEntity(NotifyEntity):
     ) -> None:
         """Send SMS/MMS to specified target user."""
         del title
-        targets = kwargs.get(ATTR_TARGET)
+        targets = [self.target_number]
         data = kwargs.get(ATTR_DATA) or {}
         twilio_args: dict[str, str | list[str]] = {
             "body": message,
@@ -329,7 +407,20 @@ class TwilioSMSNotificationEntity(NotifyEntity):
             _LOGGER.warning("At least 1 target is required")
             return
 
-        for target in targets:
+        valid_targets = [
+            target
+            for target in targets
+            if isinstance(target, str) and _is_valid_target_phone_number(target)
+        ]
+        invalid_targets = [target for target in targets if target not in valid_targets]
+        for target in invalid_targets:
+            _LOGGER.warning("Skipping invalid target phone number: %s", target)
+
+        if not valid_targets:
+            _LOGGER.warning("No valid target phone numbers were provided")
+            return
+
+        for target in valid_targets:
             try:
                 self.client.messages.create(to=target, **twilio_args)
                 _LOGGER.debug("SMS/MMS sent to %s", target)
@@ -346,6 +437,7 @@ class TwilioCallNotificationEntity(NotifyEntity):
         self,
         twilio_client,
         from_number,
+        target_number: str,
         voice=DEFAULT_VOICE,
         language=DEFAULT_LANGUAGE,
         phrase_mappings=None,
@@ -355,34 +447,47 @@ class TwilioCallNotificationEntity(NotifyEntity):
         """Initialize the entity."""
         self.client = twilio_client
         self.from_number = from_number
+        self.target_number = target_number
         self.voice = voice
         self.language = language
         self.phrase_mappings = phrase_mappings or {}
         self.webhook_url = webhook_url
         self._attr_unique_id = (
-            f"{entry_id}_twilio_call_{_phone_number_key(from_number)}"
+            f"{entry_id}_twilio_call_{_phone_number_key(from_number)}_{_phone_number_key(target_number)}"
         )
-        self._attr_name = f"Twilio Call {from_number}"
+        self._attr_name = f"Twilio Call {from_number} to {target_number}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{entry_id}_{_phone_number_key(from_number)}")},
             name=f"Twilio {from_number}",
             manufacturer="Twilio",
             model="Phone Number",
         )
+        self._attr_icon = "mdi:phone-in-talk"
 
     async def async_send_message(
         self, message: str = "", title: str | None = None, **kwargs: Any
     ) -> None:
         """Make voice call to specified target users."""
         del title
-        if not (targets := kwargs.get(ATTR_TARGET)):
-            _LOGGER.warning("At least 1 target is required")
+        targets = [self.target_number]
+
+        valid_targets = [
+            target
+            for target in targets
+            if isinstance(target, str) and _is_valid_target_phone_number(target)
+        ]
+        invalid_targets = [target for target in targets if target not in valid_targets]
+        for target in invalid_targets:
+            _LOGGER.warning("Skipping invalid target phone number: %s", target)
+
+        if not valid_targets:
+            _LOGGER.warning("No valid target phone numbers were provided")
             return
 
         data = kwargs.get(ATTR_DATA) or {}
         call_type = data.get(ATTR_CALL_TYPE, CALL_TYPE_SIMPLE)
 
-        for target in targets:
+        for target in valid_targets:
             await self._async_make_call(target, message, call_type, data)
 
     async def _async_make_call(

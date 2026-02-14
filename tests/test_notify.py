@@ -5,12 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from homeassistant.components.notify.const import ATTR_DATA, ATTR_TARGET
+from homeassistant.components.notify.const import ATTR_DATA
 
 from custom_components.twilio.const import (
     ATTR_MEDIAURL,
+    CONF_CALL_TARGETS,
     CONF_FROM_NUMBER,
     CONF_PHONE_NUMBERS,
+    CONF_SMS_TARGETS,
     DATA_TWILIO,
     DOMAIN,
 )
@@ -34,6 +36,8 @@ async def test_async_setup_entry_creates_entities_for_selected_numbers(
     entry.entry_id = "entry-1"
     entry.options = {
         CONF_PHONE_NUMBERS: ["+1234567890", "+1098765432"],
+        CONF_SMS_TARGETS: ["+14155550123"],
+        CONF_CALL_TARGETS: ["+14155550124"],
         CONF_FROM_NUMBER: "+1234567890",
     }
 
@@ -66,7 +70,11 @@ async def test_async_setup_entry_uses_legacy_from_number_fallback(
     """Setup keeps working when only legacy from_number is stored."""
     entry = MagicMock()
     entry.entry_id = "entry-1"
-    entry.options = {CONF_FROM_NUMBER: "+1234567890"}
+    entry.options = {
+        CONF_FROM_NUMBER: "+1234567890",
+        CONF_SMS_TARGETS: ["+14155550123"],
+        CONF_CALL_TARGETS: ["+14155550124"],
+    }
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
@@ -88,12 +96,14 @@ def test_notify_entities_include_device_info(mock_twilio_client):
     sms = TwilioSMSNotificationEntity(
         twilio_client=mock_twilio_client,
         from_number="+1234567890",
+        target_number="+14155550123",
         webhook_url=None,
         entry_id="entry-1",
     )
     call = TwilioCallNotificationEntity(
         twilio_client=mock_twilio_client,
         from_number="+1234567890",
+        target_number="+14155550124",
         webhook_url=None,
         entry_id="entry-1",
     )
@@ -110,18 +120,17 @@ async def test_sms_entity_send_message(hass, mock_twilio_client):
     entity = TwilioSMSNotificationEntity(
         mock_twilio_client,
         "+1234567890",
+        "+14155550123",
         None,
         "entry-1",
     )
     entity.hass = hass
 
-    await entity.async_send_message(
-        "Test message", "Test title", **{ATTR_TARGET: ["+0987654321"]}
-    )
+    await entity.async_send_message("Test message", "Test title")
 
     mock_twilio_client.messages.create.assert_called_once()
     call_args = mock_twilio_client.messages.create.call_args[1]
-    assert call_args["to"] == "+0987654321"
+    assert call_args["to"] == "+14155550123"
     assert call_args["from_"] == "+1234567890"
     assert call_args["body"] == "Test message"
 
@@ -133,6 +142,7 @@ async def test_sms_entity_send_mms(hass, mock_twilio_client):
     entity = TwilioSMSNotificationEntity(
         mock_twilio_client,
         "+1234567890",
+        "+14155550123",
         None,
         "entry-1",
     )
@@ -141,7 +151,6 @@ async def test_sms_entity_send_mms(hass, mock_twilio_client):
     await entity.async_send_message(
         "Test message",
         **{
-            ATTR_TARGET: ["+0987654321"],
             ATTR_DATA: {ATTR_MEDIAURL: ["https://example.com/image.jpg"]},
         },
     )
@@ -154,23 +163,39 @@ async def test_sms_entity_send_mms(hass, mock_twilio_client):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_sms_entity_send_to_multiple_targets(hass, mock_twilio_client):
-    """Test sending SMS to multiple targets."""
+async def test_sms_entity_send_to_fixed_target(hass, mock_twilio_client):
+    """Entity sends SMS only to its configured target."""
     entity = TwilioSMSNotificationEntity(
         mock_twilio_client,
         "+1234567890",
+        "+14155550124",
         None,
         "entry-1",
     )
     entity.hass = hass
 
-    await entity.async_send_message(
-        "Test message",
-        "Anoter Tes message",
-        **{ATTR_TARGET: ["+0987654321", "+1111111111"]},
-    )
+    await entity.async_send_message("Test message", "Another test message")
 
-    assert mock_twilio_client.messages.create.call_count == 2
+    mock_twilio_client.messages.create.assert_called_once()
+    assert mock_twilio_client.messages.create.call_args.kwargs["to"] == "+14155550124"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sms_entity_skips_invalid_entity_target(hass, mock_twilio_client):
+    """Invalid configured entity target is ignored."""
+    entity = TwilioSMSNotificationEntity(
+        mock_twilio_client,
+        "+1234567890",
+        "invalid",
+        None,
+        "entry-1",
+    )
+    entity.hass = hass
+
+    await entity.async_send_message("Test message")
+
+    mock_twilio_client.messages.create.assert_not_called()
 
 
 @pytest.mark.unit
@@ -183,6 +208,7 @@ async def test_sms_entity_send_mms_camera_entity(hass, mock_twilio_client, tmp_p
     entity = TwilioSMSNotificationEntity(
         mock_twilio_client,
         "+1234567890",
+        "+14155550123",
         None,
         "entry-1",
     )
@@ -195,7 +221,6 @@ async def test_sms_entity_send_mms_camera_entity(hass, mock_twilio_client, tmp_p
         await entity.async_send_message(
             "Camera snapshot",
             **{
-                ATTR_TARGET: ["+0987654321"],
                 ATTR_DATA: {
                     ATTR_CAMERA_ENTITY: "camera.front_door",
                 },
@@ -230,6 +255,7 @@ async def test_sms_entity_send_mms_image_entity(hass, mock_twilio_client, tmp_pa
     entity = TwilioSMSNotificationEntity(
         mock_twilio_client,
         "+1234567890",
+        "+14155550123",
         None,
         "entry-1",
     )
@@ -242,7 +268,6 @@ async def test_sms_entity_send_mms_image_entity(hass, mock_twilio_client, tmp_pa
         await entity.async_send_message(
             "Image snapshot",
             **{
-                ATTR_TARGET: ["+0987654321"],
                 ATTR_DATA: {
                     ATTR_IMAGE_ENTITY: "image.front_door",
                 },
@@ -282,6 +307,7 @@ async def test_sms_entity_send_mms_image_path_from_www(
     entity = TwilioSMSNotificationEntity(
         mock_twilio_client,
         "+1234567890",
+        "+14155550123",
         None,
         "entry-1",
     )
@@ -290,7 +316,6 @@ async def test_sms_entity_send_mms_image_path_from_www(
     await entity.async_send_message(
         "File snapshot",
         **{
-            ATTR_TARGET: ["+0987654321"],
             ATTR_DATA: {
                 ATTR_IMAGE_PATH: str(image_file),
             },
@@ -319,6 +344,7 @@ async def test_sms_entity_send_mms_image_path_too_large(
     entity = TwilioSMSNotificationEntity(
         mock_twilio_client,
         "+1234567890",
+        "+14155550123",
         None,
         "entry-1",
     )
@@ -327,7 +353,6 @@ async def test_sms_entity_send_mms_image_path_too_large(
     await entity.async_send_message(
         "Oversized file",
         **{
-            ATTR_TARGET: ["+0987654321"],
             ATTR_DATA: {
                 ATTR_IMAGE_PATH: str(image_file),
             },
@@ -347,6 +372,7 @@ async def test_sms_entity_attachment_without_external_url_logs_warning(
     entity = TwilioSMSNotificationEntity(
         mock_twilio_client,
         "+1234567890",
+        "+14155550123",
         None,
         "entry-1",
     )
@@ -355,7 +381,6 @@ async def test_sms_entity_attachment_without_external_url_logs_warning(
     await entity.async_send_message(
         "No external URL",
         **{
-            ATTR_TARGET: ["+0987654321"],
             ATTR_DATA: {
                 ATTR_CAMERA_ENTITY: "camera.front_door",
             },
@@ -371,14 +396,14 @@ async def test_sms_entity_attachment_without_external_url_logs_warning(
 @pytest.mark.asyncio
 async def test_call_entity_async_make_call_simple(hass, mock_twilio_client):
     """Test making a simple call async."""
-    entity = TwilioCallNotificationEntity(mock_twilio_client, "+1234567890")
+    entity = TwilioCallNotificationEntity(mock_twilio_client, "+1234567890", "+14155550123")
     entity.hass = hass
 
-    await entity._async_make_call("+0987654321", "Hello world", "simple", {})
+    await entity._async_make_call("+14155550123", "Hello world", "simple", {})
 
     mock_twilio_client.calls.create_async.assert_called_once()
     call_args = mock_twilio_client.calls.create_async.call_args[1]
-    assert call_args["to"] == "+0987654321"
+    assert call_args["to"] == "+14155550123"
     assert call_args["from_"] == "+1234567890"
 
 
@@ -386,11 +411,11 @@ async def test_call_entity_async_make_call_simple(hass, mock_twilio_client):
 @pytest.mark.asyncio
 async def test_call_entity_async_make_call_twiml(hass, mock_twilio_client):
     """Test making a call with custom TwiML URL."""
-    entity = TwilioCallNotificationEntity(mock_twilio_client, "+1234567890")
+    entity = TwilioCallNotificationEntity(mock_twilio_client, "+1234567890", "+14155550123")
     entity.hass = hass
 
     await entity._async_make_call(
-        "+0987654321", "", "twiml", {"twiml_url": "https://example.com/twiml"}
+        "+14155550123", "", "twiml", {"twiml_url": "https://example.com/twiml"}
     )
 
     mock_twilio_client.calls.create_async.assert_called_once()
@@ -405,12 +430,13 @@ async def test_call_entity_async_make_call_interactive(hass, mock_twilio_client)
     entity = TwilioCallNotificationEntity(
         mock_twilio_client,
         "+1234567890",
+        "+14155550123",
         webhook_url="https://example.com/webhook",
     )
     entity.hass = hass
 
     await entity._async_make_call(
-        "+0987654321",
+        "+14155550123",
         "Hello world",
         "interactive",
         {
@@ -427,9 +453,9 @@ async def test_call_entity_async_make_call_interactive(hass, mock_twilio_client)
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_call_entity_no_targets(hass, mock_twilio_client):
-    """Test making a call with no targets."""
-    entity = TwilioCallNotificationEntity(mock_twilio_client, "+1234567890")
+async def test_call_entity_skips_invalid_entity_target(hass, mock_twilio_client):
+    """Invalid configured call target is ignored."""
+    entity = TwilioCallNotificationEntity(mock_twilio_client, "+1234567890", "invalid")
     entity.hass = hass
 
     await entity.async_send_message("Hello world")
