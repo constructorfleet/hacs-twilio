@@ -21,18 +21,22 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install dependencies
+    - name: Install the project
       run: |
-        uv pip install --system -r requirements_test.txt
+        uv venv --python 3.14 .venv
+        source .venv/bin/activate
+        uv pip install -r requirements_test.txt
     
     - name: Lint with ruff
       run: |
-        uv pip install --system ruff
+        source .venv/bin/activate
+        uv pip install ruff
         ruff check custom_components/twilio/
       continue-on-error: true
     
     - name: Run tests with pytest
       run: |
+        source .venv/bin/activate
         export PYTHONPATH="${PYTHONPATH}:$(pwd)"
         pytest tests/ -v --cov=custom_components/twilio --cov-report=term-missing --cov-report=xml
     
