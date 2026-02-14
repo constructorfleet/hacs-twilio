@@ -43,9 +43,20 @@ CONF_TIMEOUT = "timeout"
 CONF_NUM_DIGITS = "num_digits"
 CONF_FINISH_ON_KEY = "finish_on_key"
 
+# Status callback configuration
+CONF_RECEIVE_STATUS_METHOD = "receive_status_method"
+
+# Transcription configuration
+CONF_TRANSCRIBE = "transcribe"
+CONF_TRANSCRIBE_LANGUAGE = "language_code"
+CONF_PROFANITY_FILTER = "profanity_filter"
+CONF_PARTIAL_RESULTS = "partial_results"
+CONF_AUTOMATIC_PUNCTUATION = "automatic_punctuation"
+
 # Default values
 DEFAULT_TIMEOUT = 5
 DEFAULT_NUM_DIGITS = 1
 DEFAULT_FINISH_ON_KEY = "#"
 DEFAULT_VOICE = "alice"
 DEFAULT_LANGUAGE = "en-US"
+DEFAULT_TRANSCRIBE_LANGUAGE = "en-US"

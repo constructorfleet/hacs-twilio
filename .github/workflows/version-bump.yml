@@ -1,0 +1,150 @@
+name: Version Bump
+
+on:
+  pull_request:
+    types: [opened, labeled, synchronize]
+    branches:
+      - main
+
+jobs:
+  version-bump:
+    name: Bump Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for version labels
+        id: check_labels
+        run: |
+          LABELS=$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH")
+          echo "Labels: $LABELS"
+          
+          if echo "$LABELS" | grep -q "major"; then
+            echo "bump_type=major" >> $GITHUB_OUTPUT
+            echo "Found major label"
+          elif echo "$LABELS" | grep -q "minor"; then
+            echo "bump_type=minor" >> $GITHUB_OUTPUT
+            echo "Found minor label"
+          elif echo "$LABELS" | grep -q "patch"; then
+            echo "bump_type=patch" >> $GITHUB_OUTPUT
+            echo "Found patch label"
+          else
+            echo "bump_type=none" >> $GITHUB_OUTPUT
+            echo "No version bump label found"
+          fi
+
+      - name: Get current version
+        id: current_version
+        if: steps.check_labels.outputs.bump_type != 'none'
+        run: |
+          VERSION=$(jq -r '.version' custom_components/twilio/manifest.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Calculate new version
+        id: new_version
+        if: steps.check_labels.outputs.bump_type != 'none'
+        run: |
+          CURRENT="${{ steps.current_version.outputs.version }}"
+          BUMP_TYPE="${{ steps.check_labels.outputs.bump_type }}"
+          
+          # Split version into parts
+          IFS='.' read -r -a version_parts <<< "$CURRENT"
+          MAJOR="${version_parts[0]}"
+          MINOR="${version_parts[1]}"
+          PATCH="${version_parts[2]}"
+          
+          # Bump version based on type
+          if [ "$BUMP_TYPE" = "major" ]; then
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+          elif [ "$BUMP_TYPE" = "minor" ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          elif [ "$BUMP_TYPE" = "patch" ]; then
+            PATCH=$((PATCH + 1))
+          fi
+          
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+      - name: Update manifest.json
+        if: steps.check_labels.outputs.bump_type != 'none'
+        run: |
+          NEW_VERSION="${{ steps.new_version.outputs.new_version }}"
+          jq --arg version "$NEW_VERSION" '.version = $version' \
+            custom_components/twilio/manifest.json > manifest.tmp
+          mv manifest.tmp custom_components/twilio/manifest.json
+          
+          echo "Updated manifest.json to version $NEW_VERSION"
+          cat custom_components/twilio/manifest.json
+
+      - name: Update CHANGELOG.md
+        if: steps.check_labels.outputs.bump_type != 'none'
+        run: |
+          NEW_VERSION="${{ steps.new_version.outputs.new_version }}"
+          DATE=$(date +%Y-%m-%d)
+          
+          # Create new changelog entry
+          TEMP_FILE=$(mktemp)
+          echo "# Changelog" > "$TEMP_FILE"
+          echo "" >> "$TEMP_FILE"
+          echo "All notable changes to this project will be documented in this file." >> "$TEMP_FILE"
+          echo "" >> "$TEMP_FILE"
+          echo "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)," >> "$TEMP_FILE"
+          echo "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)." >> "$TEMP_FILE"
+          echo "" >> "$TEMP_FILE"
+          echo "## [$NEW_VERSION] - $DATE" >> "$TEMP_FILE"
+          echo "" >> "$TEMP_FILE"
+          echo "### Changed" >> "$TEMP_FILE"
+          echo "- Version bump via PR #${{ github.event.pull_request.number }}" >> "$TEMP_FILE"
+          echo "" >> "$TEMP_FILE"
+          
+          # Append existing changelog (skip header)
+          if [ -f CHANGELOG.md ]; then
+            tail -n +8 CHANGELOG.md >> "$TEMP_FILE"
+          fi
+          
+          mv "$TEMP_FILE" CHANGELOG.md
+          echo "Updated CHANGELOG.md"
+
+      - name: Commit version bump
+        if: steps.check_labels.outputs.bump_type != 'none'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add custom_components/twilio/manifest.json CHANGELOG.md
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            NEW_VERSION="${{ steps.new_version.outputs.new_version }}"
+            git commit -m "Bump version to $NEW_VERSION"
+            git push
+            echo "Pushed version bump to $NEW_VERSION"
+          fi
+
+      - name: Comment on PR
+        if: steps.check_labels.outputs.bump_type != 'none'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const newVersion = '${{ steps.new_version.outputs.new_version }}';
+            const bumpType = '${{ steps.check_labels.outputs.bump_type }}';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 Version bumped to **${newVersion}** (${bumpType})`
+            });

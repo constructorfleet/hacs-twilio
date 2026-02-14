@@ -156,17 +156,22 @@ async def handle_webhook(
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configure based on config entry."""
+    webhook_id = entry.data[CONF_WEBHOOK_ID]
+    webhook_url = webhook.async_generate_url(hass, webhook_id)
+    
     webhook.async_register(
-        hass, DOMAIN, "Twilio", entry.data[CONF_WEBHOOK_ID], handle_webhook
+        hass, DOMAIN, "Twilio", webhook_id, handle_webhook
     )
 
-    # Store Twilio client in hass.data
+    # Store Twilio client and webhook info in hass.data
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         DATA_TWILIO: Client(
             entry.data[CONF_ACCOUNT_SID],
             entry.data[CONF_AUTH_TOKEN],
-        )
+        ),
+        "webhook_id": webhook_id,
+        "webhook_url": webhook_url,
     }
 
     # Forward setup to platforms
