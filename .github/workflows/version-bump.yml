@@ -2,7 +2,7 @@ name: Version Bump
 
 on:
   pull_request:
-    types: [opened, labeled, synchronize]
+    types: [opened, labeled]
     branches:
       - main
 
@@ -48,9 +48,22 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Current version: $VERSION"
 
+      - name: Check if PR already bumped
+        id: already_bumped
+        if: steps.check_labels.outputs.bump_type != 'none'
+        run: |
+          PR_LINE="Version bump via PR #${{ github.event.pull_request.number }}"
+          if [ -f CHANGELOG.md ] && grep -Fq "$PR_LINE" CHANGELOG.md; then
+            echo "already_bumped=true" >> $GITHUB_OUTPUT
+            echo "Version bump already applied for this PR"
+          else
+            echo "already_bumped=false" >> $GITHUB_OUTPUT
+            echo "No existing version bump found for this PR"
+          fi
+
       - name: Calculate new version
         id: new_version
-        if: steps.check_labels.outputs.bump_type != 'none'
+        if: steps.check_labels.outputs.bump_type != 'none' && steps.already_bumped.outputs.already_bumped != 'true'
         run: |
           CURRENT="${{ steps.current_version.outputs.version }}"
           BUMP_TYPE="${{ steps.check_labels.outputs.bump_type }}"
@@ -78,7 +91,7 @@ jobs:
           echo "New version: $NEW_VERSION"
 
       - name: Update manifest.json
-        if: steps.check_labels.outputs.bump_type != 'none'
+        if: steps.check_labels.outputs.bump_type != 'none' && steps.already_bumped.outputs.already_bumped != 'true'
         run: |
           NEW_VERSION="${{ steps.new_version.outputs.new_version }}"
           jq --arg version "$NEW_VERSION" '.version = $version' \
@@ -89,7 +102,7 @@ jobs:
           cat custom_components/twilio/manifest.json
 
       - name: Update CHANGELOG.md
-        if: steps.check_labels.outputs.bump_type != 'none'
+        if: steps.check_labels.outputs.bump_type != 'none' && steps.already_bumped.outputs.already_bumped != 'true'
         run: |
           NEW_VERSION="${{ steps.new_version.outputs.new_version }}"
           DATE=$(date +%Y-%m-%d)
@@ -118,7 +131,7 @@ jobs:
           echo "Updated CHANGELOG.md"
 
       - name: Commit version bump
-        if: steps.check_labels.outputs.bump_type != 'none'
+        if: steps.check_labels.outputs.bump_type != 'none' && steps.already_bumped.outputs.already_bumped != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -135,7 +148,7 @@ jobs:
           fi
 
       - name: Comment on PR
-        if: steps.check_labels.outputs.bump_type != 'none'
+        if: steps.check_labels.outputs.bump_type != 'none' && steps.already_bumped.outputs.already_bumped != 'true'
         uses: actions/github-script@v7
         with:
           script: |
