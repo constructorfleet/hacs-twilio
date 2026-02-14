@@ -79,11 +79,16 @@ def _targets_to_text(targets: list[str]) -> str:
 
 
 def _parse_targets_text(value: Any) -> list[str]:
-    """Parse targets from a newline/comma separated text field."""
-    if not isinstance(value, str):
-        return []
-    parts = [part.strip() for part in re.split(r"[,\n]", value) if part.strip()]
-    return [part for part in parts if PHONE_PATTERN.match(part)]
+    """Parse targets from text or list inputs into validated phone numbers."""
+    if isinstance(value, list):
+        # Defensive: selector payloads can come back as lists in some frontends.
+        return _normalize_selected_numbers(value)
+
+    if isinstance(value, str):
+        parts = [part.strip() for part in re.split(r"[,\n;]", value) if part.strip()]
+        return [part for part in parts if PHONE_PATTERN.match(part)]
+
+    return []
 
 
 def _build_number_selection_schema(
