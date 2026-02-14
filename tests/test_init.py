@@ -98,6 +98,9 @@ async def test_async_setup_entry(
     assert mock_entry.entry_id in mock_hass.data[DOMAIN]
     assert DATA_TWILIO in mock_hass.data[DOMAIN][mock_entry.entry_id]
     
+    # Ensure stale webhook handlers are replaced during reload/setup.
+    mock_webhook.async_unregister.assert_called_once_with(mock_hass, "test_webhook")
+
     # Verify webhook was registered
     mock_webhook.async_register.assert_called_once()
     
