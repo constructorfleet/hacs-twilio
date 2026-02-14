@@ -1,0 +1,55 @@
+blueprint:
+  name: Emergency Alert via Twilio
+  description: Send emergency alerts via SMS and voice call when a sensor is triggered
+  domain: automation
+  input:
+    emergency_sensor:
+      name: Emergency Sensor
+      description: The sensor that triggers the emergency alert
+      selector:
+        entity:
+          domain: binary_sensor
+    phone_numbers:
+      name: Phone Numbers
+      description: Comma-separated list of phone numbers to alert (include country code, e.g., +1234567890)
+      selector:
+        text:
+          multiline: true
+    sms_notifier:
+      name: SMS Notifier
+      description: The Twilio SMS notifier service
+      default: notify.twilio_sms
+      selector:
+        text:
+    call_notifier:
+      name: Call Notifier
+      description: The Twilio call notifier service
+      default: notify.twilio_call
+      selector:
+        text:
+    emergency_message:
+      name: Emergency Message
+      description: Custom emergency message (optional)
+      default: "Emergency alert! Please check your home immediately."
+      selector:
+        text:
+          multiline: true
+
+trigger:
+  - platform: state
+    entity_id: !input emergency_sensor
+    to: "on"
+
+action:
+  - service: !input sms_notifier
+    data:
+      message: >
+        EMERGENCY: {{ trigger.to_state.attributes.friendly_name }} triggered at {{ now().strftime('%I:%M %p') }}!
+      target: >
+        {{ (!input phone_numbers).split(',') | map('trim') | list }}
+  
+  - service: !input call_notifier
+    data:
+      message: !input emergency_message
+      target: >
+        {{ (!input phone_numbers).split(',') | map('trim') | list }}

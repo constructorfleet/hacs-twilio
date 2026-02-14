@@ -1,0 +1,21 @@
+{
+  "domain": "twilio",
+  "name": "Twilio",
+  "codeowners": [
+    "@constructorfleet"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "webhook"
+  ],
+  "documentation": "https://github.com/constructorfleet/hacs-twilio",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/constructorfleet/hacs-twilio/issues",
+  "loggers": [
+    "twilio"
+  ],
+  "requirements": [
+    "twilio==9.10.1"
+  ],
+  "version": "1.1.0"
+}

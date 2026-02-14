@@ -1,0 +1,7 @@
+{
+  "name": "Twilio",
+  "hacs": "1.6.0",
+  "domains": ["twilio"],
+  "iot_class": "Cloud Push",
+  "homeassistant": "2023.1.0"
+}
