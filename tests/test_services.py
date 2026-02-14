@@ -1,6 +1,7 @@
 """Tests for services.py functions."""
 import pytest
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.core import ServiceCall
 
@@ -27,6 +28,12 @@ def create_mock_hass_with_client(mock_twilio_client):
     }
     mock_hass.bus = MagicMock()
     mock_hass.bus.fire = MagicMock()
+    mock_hass.config = MagicMock()
+    mock_hass.config.external_url = "https://ha.example.com"
+    mock_hass.config.config_dir = "/tmp"
+    mock_hass.async_add_executor_job = AsyncMock(
+        side_effect=lambda func, *args: func(*args)
+    )
     return mock_hass
 
 
@@ -152,14 +159,14 @@ async def test_async_send_mms_success(mock_twilio_client):
     message_kwargs = mock_twilio_client.messages.create.call_args.kwargs
     assert message_kwargs["to"] == "+1234567890"
     assert message_kwargs["from_"] == "+0987654321"
-    assert message_kwargs["media_url"] == "https://example.com/image.jpg"
+    assert message_kwargs["media_url"] == ["https://example.com/image.jpg"]
     assert message_kwargs["body"] == "Photo attached"
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_async_send_mms_missing_media_url(mock_twilio_client):
-    """Test sending MMS without media_url."""
+    """Test sending MMS without any media source."""
     hass = create_mock_hass_with_client(mock_twilio_client)
 
     call_data = {
@@ -172,6 +179,58 @@ async def test_async_send_mms_missing_media_url(mock_twilio_client):
 
     assert result is None
     mock_twilio_client.messages.create.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_send_mms_with_camera_entity(mock_twilio_client):
+    """Test sending MMS using camera entity media source."""
+    hass = create_mock_hass_with_client(mock_twilio_client)
+
+    call_data = {
+        "to": "+1234567890",
+        "from_number": "+0987654321",
+        "camera_entity": "camera.front_door",
+    }
+    service_call = ServiceCall(hass, "twilio", "send_mms", call_data)
+
+    with patch(
+        "custom_components.twilio.services._build_entity_media_url",
+        new=AsyncMock(return_value="https://ha.example.com/local/twilio_snapshots/camera_front_door_1.jpg"),
+    ):
+        result = await async_send_mms(hass, service_call)
+
+    assert result is not None
+    message_kwargs = mock_twilio_client.messages.create.call_args.kwargs
+    assert message_kwargs["media_url"] == [
+        "https://ha.example.com/local/twilio_snapshots/camera_front_door_1.jpg"
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_send_mms_with_image_path(mock_twilio_client, tmp_path):
+    """Test sending MMS using local image path media source."""
+    hass = create_mock_hass_with_client(mock_twilio_client)
+    hass.config.config_dir = str(tmp_path)
+    image_file = Path(tmp_path) / "www" / "snapshots" / "front.jpg"
+    image_file.parent.mkdir(parents=True, exist_ok=True)
+    image_file.write_bytes(b"test-image")
+
+    call_data = {
+        "to": "+1234567890",
+        "from_number": "+0987654321",
+        "image_path": str(image_file),
+    }
+    service_call = ServiceCall(hass, "twilio", "send_mms", call_data)
+
+    result = await async_send_mms(hass, service_call)
+
+    assert result is not None
+    message_kwargs = mock_twilio_client.messages.create.call_args.kwargs
+    assert message_kwargs["media_url"] == [
+        "https://ha.example.com/local/snapshots/front.jpg"
+    ]
 
 
 @pytest.mark.unit
