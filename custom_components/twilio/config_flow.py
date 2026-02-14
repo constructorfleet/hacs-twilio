@@ -13,7 +13,6 @@ from homeassistant import config_entries
 from homeassistant.components import webhook
 from homeassistant.const import CONF_WEBHOOK_ID
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_entry_flow
 
 from .const import (

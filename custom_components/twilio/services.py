@@ -6,7 +6,7 @@ import logging
 from typing import cast
 import urllib.parse
 
-from twilio.twiml.voice_response import Start, TwiML, VoiceResponse
+from twilio.twiml.voice_response import Start, VoiceResponse
 
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 
