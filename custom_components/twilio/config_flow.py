@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Sequence
 
 from twilio.rest import Client
@@ -13,6 +14,7 @@ from homeassistant import config_entries
 from homeassistant.components import webhook
 from homeassistant.const import CONF_WEBHOOK_ID
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.schema_config_entry_flow import SchemaOptionsFlowHandler
 from homeassistant.helpers.selector import (
     SelectOptionDict,
     TextSelector,
@@ -26,14 +28,19 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_ACCOUNT_SID,
     CONF_AUTH_TOKEN,
+    CONF_CALL_TARGETS,
+    CONF_CALL_TARGETS_BY_NUMBER,
     CONF_FROM_NUMBER,
     CONF_PHONE_NUMBERS,
+    CONF_SMS_TARGETS,
+    CONF_SMS_TARGETS_BY_NUMBER,
     CONF_SENSOR_CLEANUP_HOURS,
     DEFAULT_SENSOR_CLEANUP_HOURS,
     DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
+PHONE_PATTERN = re.compile(r"^\+[1-9]\d{1,14}$")
 
 
 async def _async_get_incoming_phone_numbers(
@@ -57,11 +64,35 @@ def _normalize_selected_numbers(value: Any) -> list[str]:
     """Normalize selected phone numbers from flow input."""
     if not isinstance(value, list):
         return []
-    return [str(number).strip() for number in value if str(number).strip()]
+    return [
+        str(number).strip()
+        for number in value
+        if str(number).strip() and PHONE_PATTERN.match(str(number).strip())
+    ]
 
 
-def _build_phone_numbers_schema(
-    default_numbers: list[str], options: list[str]
+def _targets_to_text(targets: list[str]) -> str:
+    """Convert target list to editable text."""
+    return "\n".join(targets)
+
+
+def _parse_targets_text(value: Any) -> list[str]:
+    """Parse targets from a newline/comma separated text field."""
+    if not isinstance(value, str):
+        return []
+    parts = [part.strip() for part in re.split(r"[,\n]", value) if part.strip()]
+    return [part for part in parts if PHONE_PATTERN.match(part)]
+
+
+def _field_key(kind: str, phone_number: str) -> str:
+    """Build deterministic option form key for a Twilio number."""
+    normalized = "".join(char if char.isalnum() else "_" for char in phone_number)
+    return f"{kind}_{normalized}"
+
+
+def _build_number_selection_schema(
+    default_numbers: list[str],
+    options: list[str],
 ) -> vol.Schema:
     """Build form schema for selecting Twilio phone numbers."""
     select_options: Sequence[SelectOptionDict] = [
@@ -82,6 +113,105 @@ def _build_phone_numbers_schema(
             ),
         }
     )
+
+
+def _existing_targets_by_number(
+    options: dict[str, Any], selected_numbers: list[str]
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Return per-number SMS and Call targets with legacy fallback."""
+    sms_targets = _normalize_selected_numbers(options.get(CONF_SMS_TARGETS, []))
+    call_targets = _normalize_selected_numbers(options.get(CONF_CALL_TARGETS, []))
+
+    raw_sms_by_number = options.get(CONF_SMS_TARGETS_BY_NUMBER, {})
+    if not isinstance(raw_sms_by_number, dict):
+        raw_sms_by_number = {}
+    raw_call_by_number = options.get(CONF_CALL_TARGETS_BY_NUMBER, {})
+    if not isinstance(raw_call_by_number, dict):
+        raw_call_by_number = {}
+
+    sms_by_number: dict[str, list[str]] = {}
+    call_by_number: dict[str, list[str]] = {}
+    for number in selected_numbers:
+        sms_by_number[number] = _normalize_selected_numbers(
+            raw_sms_by_number.get(number, sms_targets)
+        )
+        call_by_number[number] = _normalize_selected_numbers(
+            raw_call_by_number.get(number, call_targets)
+        )
+
+    return sms_by_number, call_by_number
+
+
+def _build_targets_schema(
+    selected_numbers: list[str],
+    sms_by_number: dict[str, list[str]],
+    call_by_number: dict[str, list[str]],
+) -> vol.Schema:
+    """Build dynamic target mapping schema for selected Twilio numbers."""
+    schema_dict: dict[Any, Any] = {}
+    for number in selected_numbers:
+        sms_key = _field_key("sms", number)
+        call_key = _field_key("call", number)
+        schema_dict[
+            vol.Optional(
+                sms_key,
+                default=_targets_to_text(
+                    _normalize_selected_numbers(sms_by_number.get(number, []))
+                ),
+            )
+        ] = TextSelector()
+        schema_dict[
+            vol.Optional(
+                call_key,
+                default=_targets_to_text(
+                    _normalize_selected_numbers(call_by_number.get(number, []))
+                ),
+            )
+        ] = TextSelector()
+    return vol.Schema(schema_dict)
+
+
+def _build_options_payload(
+    selected_numbers: list[str],
+    sms_by_number: dict[str, list[str]],
+    call_by_number: dict[str, list[str]],
+    *,
+    sensor_cleanup_hours: int | None = None,
+) -> dict[str, Any]:
+    """Build normalized options payload for storage."""
+    normalized_sms_by_number = {
+        number: _normalize_selected_numbers(sms_by_number.get(number, []))
+        for number in selected_numbers
+    }
+    normalized_call_by_number = {
+        number: _normalize_selected_numbers(call_by_number.get(number, []))
+        for number in selected_numbers
+    }
+    flat_sms = sorted(
+        {
+            target
+            for targets in normalized_sms_by_number.values()
+            for target in targets
+        }
+    )
+    flat_call = sorted(
+        {
+            target
+            for targets in normalized_call_by_number.values()
+            for target in targets
+        }
+    )
+    payload: dict[str, Any] = {
+        CONF_PHONE_NUMBERS: selected_numbers,
+        CONF_SMS_TARGETS_BY_NUMBER: normalized_sms_by_number,
+        CONF_CALL_TARGETS_BY_NUMBER: normalized_call_by_number,
+        CONF_SMS_TARGETS: flat_sms,
+        CONF_CALL_TARGETS: flat_call,
+        CONF_FROM_NUMBER: selected_numbers[0] if selected_numbers else "",
+    }
+    if sensor_cleanup_hours is not None:
+        payload[CONF_SENSOR_CLEANUP_HOURS] = sensor_cleanup_hours
+    return payload
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
@@ -113,16 +243,26 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
 class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Twilio."""
 
-    VERSION = 1
+    VERSION = 2
     _user_data: dict[str, str]
     _available_numbers: list[str]
+    _selected_numbers: list[str]
+
+    async def __call__(
+        self, step_id: str, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Dynamically dispatch to async_step_<step_id> handlers."""
+        handler = getattr(self, f"async_step_{step_id}", None)
+        if handler is None:
+            return self.async_abort(reason="unknown")
+        return await handler(user_input)
 
     @staticmethod
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> TwilioOptionsFlowHandler:
         """Get the options flow for this handler."""
-        return TwilioOptionsFlowHandler()
+        return TwilioOptionsFlowHandler(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -163,14 +303,15 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                     errors["base"] = "unknown"
                 else:
-                    return await self.async_step_phone_numbers(
+                    return await self(
+                        "phone_numbers",
                         {
                             CONF_PHONE_NUMBERS: (
                                 self._available_numbers
                                 if len(self._available_numbers) == 1
                                 else []
                             )
-                        }
+                        },
                     )
 
         data_schema = vol.Schema(
@@ -191,16 +332,37 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> config_entries.ConfigFlowResult:
         """Handle phone number selection after credentials validation."""
         if user_input is not None:
-            selected_numbers = _normalize_selected_numbers(
+            self._selected_numbers = _normalize_selected_numbers(
                 user_input.get(CONF_PHONE_NUMBERS, [])
             )
+            return await self("targets")
+
+        default_numbers = (
+            self._available_numbers if len(self._available_numbers) == 1 else []
+        )
+        return self.async_show_form(
+            step_id="phone_numbers",
+            data_schema=_build_number_selection_schema(
+                default_numbers=default_numbers,
+                options=self._available_numbers,
+            ),
+        )
+
+    async def async_step_targets(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Handle per-number target mapping during initial setup."""
+        if user_input is not None:
+            sms_by_number: dict[str, list[str]] = {}
+            call_by_number: dict[str, list[str]] = {}
+            for number in self._selected_numbers:
+                sms_key = _field_key("sms", number)
+                call_key = _field_key("call", number)
+                sms_by_number[number] = _parse_targets_text(user_input.get(sms_key, ""))
+                call_by_number[number] = _parse_targets_text(user_input.get(call_key, ""))
+
             webhook_id = webhook.async_generate_id()
             webhook_url = webhook.async_generate_url(self.hass, webhook_id)
-            options = {
-                CONF_PHONE_NUMBERS: selected_numbers,
-                # Keep legacy option populated for backward compatibility.
-                CONF_FROM_NUMBER: selected_numbers[0] if selected_numbers else "",
-            }
             return self.async_create_entry(
                 title="Twilio",
                 data={
@@ -208,18 +370,24 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_AUTH_TOKEN: self._user_data[CONF_AUTH_TOKEN],
                     CONF_WEBHOOK_ID: webhook_id,
                 },
-                options=options,
+                options=_build_options_payload(
+                    selected_numbers=self._selected_numbers,
+                    sms_by_number=sms_by_number,
+                    call_by_number=call_by_number,
+                ),
                 description_placeholders={"webhook_url": webhook_url},
             )
 
-        default_numbers = (
-            self._available_numbers if len(self._available_numbers) == 1 else []
+        sms_by_number, call_by_number = _existing_targets_by_number(
+            options={},
+            selected_numbers=self._selected_numbers,
         )
         return self.async_show_form(
-            step_id="phone_numbers",
-            data_schema=_build_phone_numbers_schema(
-                default_numbers=default_numbers,
-                options=self._available_numbers,
+            step_id="targets",
+            data_schema=_build_targets_schema(
+                selected_numbers=self._selected_numbers,
+                sms_by_number=sms_by_number,
+                call_by_number=call_by_number,
             ),
         )
 
@@ -244,8 +412,11 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception:
             _LOGGER.debug("Failed to fetch incoming phone numbers during import")
         else:
-            options[CONF_PHONE_NUMBERS] = numbers
-            options[CONF_FROM_NUMBER] = numbers[0] if numbers else ""
+            options = _build_options_payload(
+                selected_numbers=numbers,
+                sms_by_number={number: [] for number in numbers},
+                call_by_number={number: [] for number in numbers},
+            )
 
         return self.async_create_entry(
             title="Twilio",
@@ -259,8 +430,23 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
 
-class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
+class TwilioOptionsFlowHandler(SchemaOptionsFlowHandler):
     """Handle Twilio options."""
+    _selected_numbers: list[str]
+    _cleanup_hours: int
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow handler."""
+        super().__init__(config_entry, options_flow={})
+
+    async def __call__(
+        self, step_id: str, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Dynamically dispatch to async_step_<step_id> handlers."""
+        handler = getattr(self, f"async_step_{step_id}", None)
+        if handler is None:
+            return self.async_abort(reason="unknown")
+        return await handler(user_input)
 
     async def _async_get_phone_number_options(self) -> list[str]:
         """Fetch incoming Twilio phone numbers for this account."""
@@ -275,20 +461,23 @@ class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Manage the options."""
+        """Manage the options (step 1: select Twilio numbers)."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             selected_numbers = _normalize_selected_numbers(
                 user_input.get(CONF_PHONE_NUMBERS, [])
             )
-
-            user_input[CONF_PHONE_NUMBERS] = selected_numbers
-            # Keep legacy option populated for backward compatibility.
-            user_input[CONF_FROM_NUMBER] = (
-                selected_numbers[0] if selected_numbers else ""
+            self._selected_numbers = selected_numbers
+            self._cleanup_hours = int(
+                user_input.get(
+                    CONF_SENSOR_CLEANUP_HOURS,
+                    self.config_entry.options.get(
+                        CONF_SENSOR_CLEANUP_HOURS, DEFAULT_SENSOR_CLEANUP_HOURS
+                    ),
+                )
             )
-            return self.async_create_entry(title="", data=user_input)
+            return await self("targets")
 
         available_numbers: list[str] = []
         try:
@@ -304,7 +493,6 @@ class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
         if not isinstance(default_numbers, list):
             fallback_number = self.config_entry.options.get(CONF_FROM_NUMBER, "")
             default_numbers = [fallback_number] if fallback_number else []
-
         # Preserve already-selected numbers even when the Twilio API doesn't return them.
         for selected in default_numbers:
             if selected and selected not in available_numbers:
@@ -314,7 +502,7 @@ class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
-                _build_phone_numbers_schema(
+                _build_number_selection_schema(
                     default_numbers=default_numbers,
                     options=available_numbers,
                 ).schema
@@ -328,6 +516,57 @@ class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_targets(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Manage the options (step 2: per-number target settings)."""
+        if not hasattr(self, "_selected_numbers"):
+            default_numbers = self.config_entry.options.get(CONF_PHONE_NUMBERS, [])
+            self._selected_numbers = (
+                default_numbers if isinstance(default_numbers, list) else []
+            )
+        if not hasattr(self, "_cleanup_hours"):
+            self._cleanup_hours = int(
+                self.config_entry.options.get(
+                    CONF_SENSOR_CLEANUP_HOURS, DEFAULT_SENSOR_CLEANUP_HOURS
+                )
+            )
+
+        sms_by_number, call_by_number = _existing_targets_by_number(
+            options=dict(self.config_entry.options),
+            selected_numbers=self._selected_numbers,
+        )
+
+        if user_input is not None:
+            next_sms_by_number: dict[str, list[str]] = {}
+            next_call_by_number: dict[str, list[str]] = {}
+            for number in self._selected_numbers:
+                sms_key = _field_key("sms", number)
+                call_key = _field_key("call", number)
+                next_sms_by_number[number] = _parse_targets_text(user_input.get(sms_key, ""))
+                next_call_by_number[number] = _parse_targets_text(
+                    user_input.get(call_key, "")
+                )
+
+            return self.async_create_entry(
+                title="",
+                data=_build_options_payload(
+                    selected_numbers=self._selected_numbers,
+                    sms_by_number=next_sms_by_number,
+                    call_by_number=next_call_by_number,
+                    sensor_cleanup_hours=self._cleanup_hours,
+                ),
+            )
+
+        return self.async_show_form(
+            step_id="targets",
+            data_schema=_build_targets_schema(
+                selected_numbers=self._selected_numbers,
+                sms_by_number=sms_by_number,
+                call_by_number=call_by_number,
+            ),
         )
 
 

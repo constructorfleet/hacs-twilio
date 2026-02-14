@@ -8,6 +8,17 @@
           "account_sid": "Account SID",
           "auth_token": "Auth Token"
         }
+      },
+      "phone_numbers": {
+        "title": "Twilio Numbers",
+        "description": "Select which Twilio numbers to enable.",
+        "data": {
+          "phone_numbers": "Twilio Phone Numbers"
+        }
+      },
+      "targets": {
+        "title": "Target Mapping",
+        "description": "Configure SMS and call targets for each selected Twilio number. Enter one target per line or comma-separated."
       }
     },
     "error": {
@@ -23,11 +34,22 @@
     "step": {
       "init": {
         "title": "Twilio Options",
-        "description": "Configure additional options for your Twilio integration.",
+        "description": "Select Twilio numbers and cleanup behavior.",
         "data": {
+          "phone_numbers": "Twilio Phone Numbers",
           "sensor_cleanup_hours": "Hours to keep call sensors after completion (1-168)"
         }
+      },
+      "targets": {
+        "title": "Target Mapping",
+        "description": "Configure SMS and call targets for each selected Twilio number. Enter one target per line or comma-separated."
       }
+    }
+  },
+  "issues": {
+    "missing_target_mapping": {
+      "title": "Configure Twilio target mapping",
+      "description": "No SMS or call targets are configured for: {numbers}. Open Twilio options and configure per-number target mappings."
     }
   }
 }
