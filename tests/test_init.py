@@ -2,6 +2,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from homeassistant.config_entries import ConfigEntry
+from homeassistant import config_entries
 from homeassistant.const import CONF_WEBHOOK_ID
 
 from custom_components.twilio import (
@@ -31,32 +32,28 @@ async def test_async_setup_no_config(hass):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-@patch("custom_components.twilio.AsyncTwilioHttpClient")
-@patch("custom_components.twilio.Client")
-async def test_async_setup_with_config(mock_client_class, mock_http_client_class, hass):
-    """Test setup with configuration."""
+async def test_async_setup_with_config(hass):
+    """Test setup imports YAML configuration into config entries."""
     config = {
         DOMAIN: {
             CONF_ACCOUNT_SID: "ACtest123",
             CONF_AUTH_TOKEN: "test_token",
         }
     }
-    
-    mock_client = MagicMock()
-    mock_client_class.return_value = mock_client
-    mock_http_client = MagicMock()
-    mock_http_client_class.return_value = mock_http_client
-    
+
+    hass.config_entries.flow.async_init = AsyncMock(return_value={"type": "abort"})
+
     result = await async_setup(hass, config)
-    
+
     assert result is True
-    assert DATA_TWILIO in hass.data
-    assert hass.data[DATA_TWILIO] == mock_client
-    
-    # Verify Client was created with async HTTP client
-    mock_client_class.assert_called_once()
-    call_args = mock_client_class.call_args
-    assert call_args[1]["http_client"] == mock_http_client
+    hass.config_entries.flow.async_init.assert_awaited_once_with(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_IMPORT},
+        data={
+            CONF_ACCOUNT_SID: "ACtest123",
+            CONF_AUTH_TOKEN: "test_token",
+        },
+    )
 
 
 @pytest.mark.unit
