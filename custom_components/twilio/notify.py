@@ -16,6 +16,7 @@ from homeassistant.components.notify.const import ATTR_DATA, ATTR_TARGET
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -362,12 +363,12 @@ class TwilioCallNotificationEntity(NotifyEntity):
             f"{entry_id}_twilio_call_{_phone_number_key(from_number)}"
         )
         self._attr_name = f"Twilio Call {from_number}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"{entry_id}_{_phone_number_key(from_number)}")},
-            "name": f"Twilio {from_number}",
-            "manufacturer": "Twilio",
-            "model": "Phone Number",
-        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry_id}_{_phone_number_key(from_number)}")},
+            name=f"Twilio {from_number}",
+            manufacturer="Twilio",
+            model="Phone Number",
+        )
 
     async def async_send_message(
         self, message: str = "", title: str | None = None, **kwargs: Any

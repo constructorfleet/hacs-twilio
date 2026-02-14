@@ -9,6 +9,7 @@ from typing import Any
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later
@@ -337,17 +338,17 @@ class TwilioCallSensor(SensorEntity):
             ATTR_FULL_TRANSCRIPTION: "\n".join(self._full_transcription),
         }
         if self._twilio_number:
-            self._attr_device_info = {
-                "identifiers": {
+            self._attr_device_info = DeviceInfo(
+                identifiers={
                     (
                         DOMAIN,
                         f"{self._entry_id}_{_phone_number_key(self._twilio_number)}",
                     )
                 },
-                "name": f"Twilio {self._twilio_number}",
-                "manufacturer": "Twilio",
-                "model": "Phone Number",
-            }
+                name=f"Twilio {self._twilio_number}",
+                manufacturer="Twilio",
+                model="Phone Number",
+            )
 
         if self._end_time:
             self._attr_extra_state_attributes["end_time"] = self._end_time.isoformat()
