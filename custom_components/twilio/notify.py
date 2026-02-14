@@ -182,28 +182,13 @@ class TwilioSMSNotificationService(BaseNotificationService):
         if ATTR_IMAGE_PATH in data:
             image_path = data[ATTR_IMAGE_PATH]
             if os.path.exists(image_path):
-                try:
-                    # Read image file and convert to data URL
-                    with open(image_path, "rb") as img_file:
-                        img_data = img_file.read()
-                        img_base64 = base64.b64encode(img_data).decode()
-                        # Determine MIME type from extension
-                        ext = os.path.splitext(image_path)[1].lower()
-                        mime_types = {
-                            ".jpg": "image/jpeg",
-                            ".jpeg": "image/jpeg",
-                            ".png": "image/png",
-                            ".gif": "image/gif",
-                        }
-                        mime_type = mime_types.get(ext, "image/jpeg")
-                        # Note: Twilio doesn't support data URLs for MMS
-                        # Image paths require external hosting
-                        _LOGGER.warning(
-                            "Image file path support requires external image hosting. "
-                            "Please upload the image and use media_url with a publicly accessible URL instead."
-                        )
-                except Exception as exc:
-                    _LOGGER.error("Failed to read image file %s: %s", image_path, exc)
+                # TODO: Implement image upload to external hosting service
+                # For now, log a warning that image paths require external hosting
+                _LOGGER.warning(
+                    "Image file path support requires external image hosting. "
+                    "The image will not be sent. "
+                    "Please upload the image to a publicly accessible URL and use media_url instead."
+                )
             else:
                 _LOGGER.error("Image file not found: %s", image_path)
 
@@ -425,10 +410,6 @@ class TwilioCallNotificationService(BaseNotificationService):
             # Add transcription callback for basic transcription
             if transcribe_enabled and not transcribe_config and self.webhook_url:
                 record_params["transcribe_callback"] = self.webhook_url
-                
-                # Basic transcription only supports language parameter
-                if CONF_TRANSCRIBE_LANGUAGE in transcribe_config:
-                    record_params["transcribe_language"] = transcribe_config[CONF_TRANSCRIBE_LANGUAGE]
             
             response.record(**record_params)
 
