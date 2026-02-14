@@ -163,7 +163,7 @@ class TwilioSMSNotificationService(BaseNotificationService):
 
         # Handle media URLs for MMS
         media_urls = []
-        
+
         # Support direct media_url parameter (existing functionality)
         if ATTR_MEDIAURL in data:
             urls = data[ATTR_MEDIAURL]
@@ -289,7 +289,7 @@ class TwilioCallNotificationService(BaseNotificationService):
 
     def _make_simple_call(self, target: str, message: str, data: dict[str, Any]) -> None:
         """Make a simple call with a message.
-        
+
         Note: This method uses Twimlets, which is a legacy Twilio service.
         For production use, consider hosting your own TwiML endpoints.
         """
@@ -316,7 +316,7 @@ class TwilioCallNotificationService(BaseNotificationService):
                 call_args["status_callback_method"] = "POST"
 
         call = self.client.calls.create(**call_args)
-        
+
         # Fire event for call initiated
         if self.hass:
             self.hass.bus.fire(
@@ -349,7 +349,7 @@ class TwilioCallNotificationService(BaseNotificationService):
                 call_args["status_callback_method"] = "POST"
 
         call = self.client.calls.create(**call_args)
-        
+
         # Fire event for call initiated
         if self.hass:
             self.hass.bus.fire(
@@ -369,14 +369,14 @@ class TwilioCallNotificationService(BaseNotificationService):
         """Generate TwiML for interactive call.
 
         IMPORTANT: This is a simplified implementation using Twimlets for basic functionality.
-        
-        For production use with full interactive features (phrase-to-key mappings, 
+
+        For production use with full interactive features (phrase-to-key mappings,
         live transcription, status callbacks), you should:
         1. Host a webhook endpoint in your Home Assistant instance
         2. Generate TwiML with <Gather> for DTMF collection
         3. Use <Start><Stream> with transcription for real-time transcription
         4. Handle status callbacks for real-time updates
-        
+
         Note: Twimlets is a legacy service and URL-encoded TwiML has length limitations.
         For complex TwiML, consider implementing a dedicated webhook endpoint.
         """
@@ -389,7 +389,7 @@ class TwilioCallNotificationService(BaseNotificationService):
 
         # Get transcription configuration
         transcribe_config = data.get(ATTR_TRANSCRIBE_CONFIG, {})
-        
+
         # Use Stream transcription for real-time transcription with enhanced options
         if transcribe_enabled and transcribe_config and self.webhook_url:
             # Start streaming transcription
@@ -398,22 +398,22 @@ class TwilioCallNotificationService(BaseNotificationService):
                 "status_callback_url": self.webhook_url,
                 "status_callback_method": "POST",
             }
-            
+
             # Add enhanced transcription options
             if CONF_TRANSCRIBE_LANGUAGE in transcribe_config:
                 transcription_params["language_code"] = transcribe_config[CONF_TRANSCRIBE_LANGUAGE]
             else:
                 transcription_params["language_code"] = DEFAULT_TRANSCRIBE_LANGUAGE
-            
+
             if CONF_PROFANITY_FILTER in transcribe_config:
                 transcription_params["profanity_filter"] = transcribe_config[CONF_PROFANITY_FILTER]
-            
+
             if CONF_PARTIAL_RESULTS in transcribe_config:
                 transcription_params["partial_results"] = transcribe_config[CONF_PARTIAL_RESULTS]
-            
+
             if CONF_AUTOMATIC_PUNCTUATION in transcribe_config:
                 transcription_params["enable_automatic_punctuation"] = transcribe_config[CONF_AUTOMATIC_PUNCTUATION]
-            
+
             start.transcription(**transcription_params)
 
         if gather_enabled:
@@ -437,11 +437,11 @@ class TwilioCallNotificationService(BaseNotificationService):
             record_params = {
                 "transcribe": transcribe_enabled and not transcribe_config,  # Use basic transcription only if no advanced config
             }
-            
+
             # Add transcription callback for basic transcription
             if transcribe_enabled and not transcribe_config and self.webhook_url:
                 record_params["transcribe_callback"] = self.webhook_url
-            
+
             response.record(**record_params)
 
         # Convert TwiML to URL-encoded format for Twimlet

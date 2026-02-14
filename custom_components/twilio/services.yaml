@@ -38,6 +38,34 @@
 #       partial_results: Enable partial transcription results in real-time (true/false, default: false)
 #       automatic_punctuation: Enable automatic punctuation (true/false, default: false)
 
+# Make Call Service
+make_call:
+  name: Make Call
+  description: Make a voice call and return call information (call_sid, entity_id)
+  fields:
+    to:
+      name: To
+      description: Phone number to call (with country code, e.g., +1234567890)
+      required: true
+      example: "+1234567890"
+      selector:
+        text:
+    from_number:
+      name: From Number
+      description: Your Twilio phone number (with country code, e.g., +1234567890)
+      required: true
+      example: "+1234567890"
+      selector:
+        text:
+    message:
+      name: Message
+      description: Message to speak or TwiML URL
+      required: false
+      default: ""
+      example: "Hello from Home Assistant"
+      selector:
+        text:
+
 # Send DTMF Service
 send_dtmf:
   name: Send DTMF Digits
@@ -61,7 +89,7 @@ send_dtmf:
 # Start Recording Service
 start_recording:
   name: Start Call Recording
-  description: Start recording an active voice call on demand
+  description: Start recording an active voice call on demand using TwiML
   fields:
     call_sid:
       name: Call SID
@@ -70,16 +98,16 @@ start_recording:
       example: "CA1234567890abcdef1234567890abcdef"
       selector:
         text:
-    recording_channels:
-      name: Recording Channels
-      description: Record in mono or dual channel (default is mono)
+    max_length:
+      name: Max Length
+      description: Maximum recording length in seconds (1-14400, default 3600)
       required: false
-      default: "mono"
+      default: 3600
       selector:
-        select:
-          options:
-            - "mono"
-            - "dual"
+        number:
+          min: 1
+          max: 14400
+          unit_of_measurement: "seconds"
     recording_status_callback:
       name: Status Callback
       description: Enable recording status callbacks to the configured webhook
@@ -87,23 +115,40 @@ start_recording:
       default: false
       selector:
         boolean:
-    recording_status_callback_method:
-      name: Status Callback Method
-      description: HTTP method for recording status callbacks
+    transcribe:
+      name: Transcribe
+      description: Enable transcription of the recording
       required: false
-      default: "POST"
+      default: false
       selector:
-        select:
-          options:
-            - "GET"
-            - "POST"
-    trim:
-      name: Trim
-      description: Trim silence from recording
+        boolean:
+    transcribe_callback:
+      name: Transcribe Callback
+      description: Enable transcription callbacks to the configured webhook
       required: false
-      default: "trim-silence"
+      default: false
       selector:
-        select:
-          options:
-            - "trim-silence"
-            - "do-not-trim"
+        boolean:
+
+# Pause Service
+pause:
+  name: Pause Call
+  description: Pause an active call for a specified duration using TwiML
+  fields:
+    call_sid:
+      name: Call SID
+      description: The unique identifier of the active call (from sensor or event)
+      required: true
+      example: "CA1234567890abcdef1234567890abcdef"
+      selector:
+        text:
+    length:
+      name: Length
+      description: Length of pause in seconds (1-3600, default 1)
+      required: false
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 3600
+          unit_of_measurement: "seconds"

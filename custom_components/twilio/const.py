@@ -70,3 +70,5 @@ DEFAULT_SENSOR_CLEANUP_HOURS = 24
 # Services
 SERVICE_SEND_DTMF = "send_dtmf"
 SERVICE_START_RECORDING = "start_recording"
+SERVICE_PAUSE = "pause"
+SERVICE_MAKE_CALL = "make_call"

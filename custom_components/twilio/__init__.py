@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+import urllib.parse
 
 from aiohttp import web
 from twilio.rest import Client
+from twilio.twiml.voice_response import VoiceResponse
 import voluptuous as vol
 
 from homeassistant.components import webhook
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_WEBHOOK_ID, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceResponse, SupportsResponse
 from homeassistant.helpers import config_entry_flow, config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
@@ -35,6 +37,8 @@ from .const import (
     ATTR_DTMF_DIGITS,
     SERVICE_SEND_DTMF,
     SERVICE_START_RECORDING,
+    SERVICE_PAUSE,
+    SERVICE_MAKE_CALL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -160,7 +164,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configure based on config entry."""
     webhook_id = entry.data[CONF_WEBHOOK_ID]
     webhook_url = webhook.async_generate_url(hass, webhook_id)
-    
+
     webhook.async_register(
         hass, DOMAIN, "Twilio", webhook_id, handle_webhook
     )
@@ -180,79 +184,236 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Register services
+    async def async_make_call(call) -> ServiceResponse:
+        """Make a voice call and return call information."""
+        to_number = call.data.get("to")
+        message = call.data.get("message", "")
+        from_number = call.data.get("from_number")
+
+        if not to_number:
+            _LOGGER.error("'to' number is required for make_call service")
+            return None
+
+        # Get the Twilio client and from_number
+        client = None
+        default_from = None
+        for entry_data in hass.data[DOMAIN].values():
+            if isinstance(entry_data, dict) and DATA_TWILIO in entry_data:
+                client = entry_data[DATA_TWILIO]
+                break
+
+        if not client:
+            _LOGGER.error("Twilio client not found")
+            return None
+
+        # Use provided from_number or try to find a configured one
+        if not from_number:
+            # Try to get from notify platform config
+            _LOGGER.warning("No from_number provided, call may fail without configured number")
+            return None
+
+        try:
+            # Create simple TwiML for the message
+            if message.startswith(("http://", "https://")):
+                twiml_url = message
+            else:
+                twiml_url = "https://twimlets.com/message?Message="
+                twiml_url += urllib.parse.quote(message, safe="")
+
+            # Make the call
+            twilio_call = await hass.async_add_executor_job(
+                lambda: client.calls.create(
+                    to=to_number,
+                    from_=from_number,
+                    url=twiml_url,
+                )
+            )
+
+            call_sid = twilio_call.sid
+            call_status = twilio_call.status
+
+            # Fire event for call initiated
+            hass.bus.fire(
+                "twilio_call_initiated",
+                {
+                    ATTR_CALL_SID: call_sid,
+                    ATTR_TO: to_number,
+                    ATTR_FROM: from_number,
+                    ATTR_CALL_STATUS: call_status,
+                    "direction": "outbound-api",
+                },
+            )
+
+            # Wait a moment for sensor to be created
+            await hass.async_add_executor_job(lambda: __import__('time').sleep(0.5))
+
+            # Try to get the entity_id of the sensor
+            entity_id = f"sensor.twilio_call_{call_sid[:8]}".lower()
+
+            _LOGGER.info("Call initiated to %s with SID %s", to_number, call_sid)
+
+            return {
+                "call_sid": call_sid,
+                "entity_id": entity_id,
+                "status": call_status,
+                "to": to_number,
+                "from": from_number,
+            }
+
+        except Exception as err:
+            _LOGGER.error("Failed to make call to %s: %s", to_number, err)
+            return None
+
     async def async_send_dtmf(call):
         """Send DTMF digits to an active call."""
         call_sid = call.data.get(ATTR_CALL_SID)
         digits = call.data.get(ATTR_DTMF_DIGITS)
-        
+
         if not call_sid or not digits:
             _LOGGER.error("call_sid and digits are required for send_dtmf service")
             return
-        
+
         # Get the Twilio client
         client = None
         for entry_data in hass.data[DOMAIN].values():
             if isinstance(entry_data, dict) and DATA_TWILIO in entry_data:
                 client = entry_data[DATA_TWILIO]
                 break
-        
+
         if not client:
             _LOGGER.error("Twilio client not found")
             return
-        
+
         try:
-            # Send DTMF digits to the call
-            client.calls(call_sid).update(digits=digits, method="POST")
+            # Create TwiML with Play verb to send DTMF digits
+            # Add 'w' between digits for half-second pauses
+            twiml = VoiceResponse()
+            # Format digits: 'w' creates a 0.5s pause before each digit
+            formatted_digits = 'w' + 'w'.join(digits)
+            twiml.play(digits=formatted_digits)
+
+            # Convert TwiML to URL-encoded string
+            twiml_str = str(twiml)
+            twiml_url = f"https://twimlets.com/echo?Twiml={urllib.parse.quote(twiml_str)}"
+
+            # Update the call with the new TwiML
+            await hass.async_add_executor_job(
+                lambda: client.calls(call_sid).update(url=twiml_url, method="POST")
+            )
             _LOGGER.info("Sent DTMF digits '%s' to call %s", digits, call_sid)
         except Exception as err:
             _LOGGER.error("Failed to send DTMF digits to call %s: %s", call_sid, err)
-    
+
     async def async_start_recording(call):
         """Start recording an active call."""
         call_sid = call.data.get(ATTR_CALL_SID)
-        
+
         if not call_sid:
             _LOGGER.error("call_sid is required for start_recording service")
             return
-        
+
+        # Get the Twilio client and webhook URL
+        client = None
+        webhook_url = None
+        for entry_data in hass.data[DOMAIN].values():
+            if isinstance(entry_data, dict) and DATA_TWILIO in entry_data:
+                client = entry_data[DATA_TWILIO]
+                webhook_url = entry_data.get("webhook_url")
+                break
+
+        if not client:
+            _LOGGER.error("Twilio client not found")
+            return
+
+        try:
+            # Get optional parameters
+            max_length = call.data.get("max_length", 3600)  # Default 1 hour
+            recording_status_callback = call.data.get("recording_status_callback", False)
+            transcribe = call.data.get("transcribe", False)
+            transcribe_callback = call.data.get("transcribe_callback", False)
+
+            # Create TwiML with Record verb
+            twiml = VoiceResponse()
+            record_params = {
+                "max_length": max_length,
+            }
+
+            # Add recording status callback if webhook URL is configured
+            if recording_status_callback and webhook_url:
+                record_params["recording_status_callback"] = webhook_url
+                record_params["recording_status_callback_method"] = "POST"
+                record_params["recording_status_callback_event"] = ["in-progress", "completed", "absent"]
+
+            # Add transcription if requested
+            if transcribe:
+                record_params["transcribe"] = True
+                if transcribe_callback and webhook_url:
+                    record_params["transcribe_callback"] = webhook_url
+
+            twiml.record(**record_params)
+
+            # Convert TwiML to URL-encoded string
+            twiml_str = str(twiml)
+            twiml_url = f"https://twimlets.com/echo?Twiml={urllib.parse.quote(twiml_str)}"
+
+            # Update the call with the new TwiML
+            await hass.async_add_executor_job(
+                lambda: client.calls(call_sid).update(url=twiml_url, method="POST")
+            )
+            _LOGGER.info("Started recording for call %s", call_sid)
+        except Exception as err:
+            _LOGGER.error("Failed to start recording for call %s: %s", call_sid, err)
+
+    async def async_pause_call(call):
+        """Pause an active call for a specified duration."""
+        call_sid = call.data.get(ATTR_CALL_SID)
+        length = call.data.get("length", 1)
+
+        if not call_sid:
+            _LOGGER.error("call_sid is required for pause service")
+            return
+
         # Get the Twilio client
         client = None
         for entry_data in hass.data[DOMAIN].values():
             if isinstance(entry_data, dict) and DATA_TWILIO in entry_data:
                 client = entry_data[DATA_TWILIO]
                 break
-        
+
         if not client:
             _LOGGER.error("Twilio client not found")
             return
-        
+
         try:
-            # Get optional parameters
-            recording_channels = call.data.get("recording_channels", "mono")
-            recording_status_callback = call.data.get("recording_status_callback")
-            recording_status_callback_method = call.data.get("recording_status_callback_method", "POST")
-            trim = call.data.get("trim", "trim-silence")
-            
-            # Start recording
-            recording_params = {
-                "recording_channels": recording_channels,
-                "trim": trim,
-            }
-            
-            # Add status callback if webhook URL is configured
-            if recording_status_callback:
-                for entry_data in hass.data[DOMAIN].values():
-                    if isinstance(entry_data, dict) and "webhook_url" in entry_data:
-                        recording_params["recording_status_callback"] = entry_data["webhook_url"]
-                        recording_params["recording_status_callback_method"] = recording_status_callback_method
-                        break
-            
-            client.calls(call_sid).recordings.create(**recording_params)
-            _LOGGER.info("Started recording for call %s", call_sid)
+            # Create TwiML with Pause verb
+            twiml = VoiceResponse()
+            twiml.pause(length=length)
+
+            # Convert TwiML to URL-encoded string
+            twiml_str = str(twiml)
+            twiml_url = f"https://twimlets.com/echo?Twiml={urllib.parse.quote(twiml_str)}"
+
+            # Update the call with the new TwiML
+            await hass.async_add_executor_job(
+                lambda: client.calls(call_sid).update(url=twiml_url, method="POST")
+            )
+            _LOGGER.info("Paused call %s for %s seconds", call_sid, length)
         except Exception as err:
-            _LOGGER.error("Failed to start recording for call %s: %s", call_sid, err)
-    
+            _LOGGER.error("Failed to pause call %s: %s", call_sid, err)
+
     # Register the services
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_MAKE_CALL,
+        async_make_call,
+        schema=vol.Schema({
+            vol.Required("to"): cv.string,
+            vol.Required("from_number"): cv.string,
+            vol.Optional("message", default=""): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_SEND_DTMF,
@@ -262,17 +423,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Required(ATTR_DTMF_DIGITS): cv.string,
         }),
     )
-    
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_START_RECORDING,
         async_start_recording,
         schema=vol.Schema({
             vol.Required(ATTR_CALL_SID): cv.string,
-            vol.Optional("recording_channels", default="mono"): vol.In(["mono", "dual"]),
+            vol.Optional("max_length", default=3600): vol.All(vol.Coerce(int), vol.Range(min=1, max=14400)),
             vol.Optional("recording_status_callback", default=False): cv.boolean,
-            vol.Optional("recording_status_callback_method", default="POST"): vol.In(["GET", "POST"]),
-            vol.Optional("trim", default="trim-silence"): vol.In(["trim-silence", "do-not-trim"]),
+            vol.Optional("transcribe", default=False): cv.boolean,
+            vol.Optional("transcribe_callback", default=False): cv.boolean,
+        }),
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PAUSE,
+        async_pause_call,
+        schema=vol.Schema({
+            vol.Required(ATTR_CALL_SID): cv.string,
+            vol.Optional("length", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=3600)),
         }),
     )
 
@@ -289,8 +460,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         webhook.async_unregister(hass, entry.data[CONF_WEBHOOK_ID])
 
         # Unregister services
+        hass.services.async_remove(DOMAIN, SERVICE_MAKE_CALL)
         hass.services.async_remove(DOMAIN, SERVICE_SEND_DTMF)
         hass.services.async_remove(DOMAIN, SERVICE_START_RECORDING)
+        hass.services.async_remove(DOMAIN, SERVICE_PAUSE)
 
         # Remove data
         hass.data[DOMAIN].pop(entry.entry_id)
