@@ -203,11 +203,15 @@ class TwilioCallNotificationService(BaseNotificationService):
                 _LOGGER.error("Failed to initiate call to %s: %s", target, exc)
 
     def _make_simple_call(self, target: str, message: str) -> None:
-        """Make a simple call with a message."""
+        """Make a simple call with a message.
+        
+        Note: This method uses Twimlets, which is a legacy Twilio service.
+        For production use, consider hosting your own TwiML endpoints.
+        """
         if message.startswith(("http://", "https://")):
             twimlet_url = message
         else:
-            twimlet_url = "http://twimlets.com/message?Message="
+            twimlet_url = "https://twimlets.com/message?Message="
             twimlet_url += urllib.parse.quote(message, safe="")
 
         self.client.calls.create(
@@ -229,16 +233,17 @@ class TwilioCallNotificationService(BaseNotificationService):
     ) -> str:
         """Generate TwiML for interactive call.
 
-        Note: In a production environment, you would host a TwiML endpoint
-        that generates the appropriate TwiML response. This is a simplified
-        version that uses Twimlet for basic functionality.
-
-        For full interactive features (phrase-to-key mappings, live transcription),
-        you need to:
+        IMPORTANT: This is a simplified implementation using Twimlets for basic functionality.
+        
+        For production use with full interactive features (phrase-to-key mappings, 
+        live transcription, status callbacks), you should:
         1. Host a webhook endpoint in your Home Assistant instance
         2. Generate TwiML with <Gather> for DTMF collection
         3. Use <Record> with transcribe=true for transcription
         4. Handle status callbacks for real-time updates
+        
+        Note: Twimlets is a legacy service and URL-encoded TwiML has length limitations.
+        For complex TwiML, consider implementing a dedicated webhook endpoint.
         """
         gather_enabled = data.get(ATTR_GATHER_ENABLED, False)
         record_enabled = data.get(ATTR_RECORD_ENABLED, False)
@@ -265,15 +270,18 @@ class TwilioCallNotificationService(BaseNotificationService):
             response.say(message, voice=self.voice, language=self.language)
 
         if record_enabled:
+            # Note: transcribe_callback requires a full absolute URL
+            # In a production setup, you would construct this using hass.config.external_url
+            # For now, we'll omit the callback as it requires proper external URL configuration
             response.record(
                 transcribe=transcribe_enabled,
-                transcribe_callback="/api/webhook/" + self._get_webhook_id(),
+                # transcribe_callback would need: f"{self.hass.config.external_url}/api/webhook/{self._get_webhook_id()}"
             )
 
         # Convert TwiML to URL-encoded format for Twimlet
         twiml_str = str(response)
         # Use a Twimlet echo service or host your own endpoint
-        return f"http://twimlets.com/echo?Twiml={urllib.parse.quote(twiml_str)}"
+        return f"https://twimlets.com/echo?Twiml={urllib.parse.quote(twiml_str)}"
 
     def _get_webhook_id(self) -> str:
         """Get the webhook ID for this integration."""

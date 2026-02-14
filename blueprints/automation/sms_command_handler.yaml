@@ -20,19 +20,17 @@ trigger:
   - platform: event
     event_type: twilio_sms_received
 
-condition:
-  - condition: template
-    value_template: >
-      {% set authorized = (!input authorized_numbers).split(',') | map('trim') | list %}
-      {{ trigger.event.data.from in authorized }}
-  - condition: template
-    value_template: >
-      {{ trigger.event.data.body.startswith(!input command_prefix) }}
-
 action:
   - variables:
-      command: >
-        {{ trigger.event.data.body.replace(!input command_prefix, '').strip().lower() }}
+      command_prefix: !input command_prefix
+      authorized_numbers: !input authorized_numbers
+      authorized_numbers_list: "{{ authorized_numbers.split(',') | map('trim') | list }}"
+      is_authorized: "{{ trigger.event.data.from in authorized_numbers_list }}"
+      has_prefix: "{{ trigger.event.data.body.startswith(command_prefix) }}"
+      command: "{{ trigger.event.data.body.replace(command_prefix, '').strip().lower() }}"
+  
+  - condition: template
+    value_template: "{{ is_authorized and has_prefix }}"
   
   - choose:
       # Turn on/off lights
