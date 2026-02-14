@@ -1,7 +1,7 @@
 """Tests for notify.py notification services."""
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.components.notify import ATTR_DATA, ATTR_TARGET
 
@@ -11,12 +11,43 @@ from custom_components.twilio.notify import (
     ATTR_IMAGE_PATH,
     TwilioSMSNotificationService,
     TwilioCallNotificationService,
+    CONF_CALL_TARGET,
+    CONF_SMS_TARGET,
+    async_setup_entry,
     get_service,
 )
 from custom_components.twilio.const import (
+    CONF_FROM_NUMBER,
     ATTR_MEDIAURL,
     DATA_TWILIO,
+    DOMAIN,
 )
+from homeassistant.config_entries import ConfigEntry
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_setup_entry(hass):
+    """Test notify platform config entry setup hook."""
+    entry = MagicMock(spec=ConfigEntry)
+    entry.entry_id = "entry_1"
+    entry.options = {
+        CONF_FROM_NUMBER: "+1234567890",
+        CONF_SMS_TARGET: "+1987654321",
+        CONF_CALL_TARGET: "+1098765432",
+    }
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][entry.entry_id] = {
+        DATA_TWILIO: MagicMock(),
+        "webhook_url": "https://example.com/webhook",
+    }
+    async_add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    async_add_entities.assert_called_once()
+    entities = async_add_entities.call_args[0][0]
+    assert len(entities) == 2
 
 
 @pytest.mark.unit
@@ -132,68 +163,66 @@ async def test_sms_service_send_to_multiple_targets(hass, mock_twilio_client):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_sms_service_send_mms_camera_entity(hass, mock_twilio_client):
-    """Test sending MMS using a camera entity picture URL."""
+async def test_sms_service_send_mms_camera_entity(hass, mock_twilio_client, tmp_path):
+    """Test sending MMS using camera snapshot exported under /local."""
     hass.config.external_url = "https://ha.example.com"
-    hass.states.async_set(
-        "camera.front_door",
-        "idle",
-        {"entity_picture": "/api/camera_proxy/camera.front_door?token=testtoken"},
-    )
+    hass.config.config_dir = str(tmp_path)
 
     service = TwilioSMSNotificationService(
         mock_twilio_client, "+1234567890", hass, None
     )
 
-    await service.async_send_message(
-        "Camera snapshot",
-        **{
-            ATTR_TARGET: ["+0987654321"],
-            ATTR_DATA: {
-                ATTR_CAMERA_ENTITY: "camera.front_door",
+    with patch(
+        "custom_components.twilio.notify.TwilioSMSNotificationService._async_get_entity_snapshot",
+        new=AsyncMock(return_value=("image/jpeg", b"jpeg-data")),
+    ):
+        await service.async_send_message(
+            "Camera snapshot",
+            **{
+                ATTR_TARGET: ["+0987654321"],
+                ATTR_DATA: {
+                    ATTR_CAMERA_ENTITY: "camera.front_door",
+                },
             },
-        },
-    )
+        )
 
     call_args = mock_twilio_client.messages.create.call_args[1]
     assert ATTR_MEDIAURL in call_args
-    assert (
-        "https://ha.example.com/api/camera_proxy/camera.front_door?token=testtoken"
-        in call_args[ATTR_MEDIAURL]
-    )
+    media_url = call_args[ATTR_MEDIAURL][0]
+    assert media_url.startswith("https://ha.example.com/local/twilio_snapshots/camera_front_door_")
+    assert len(list((Path(tmp_path) / "www" / "twilio_snapshots").glob("camera_front_door_*.jpg"))) == 1
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_sms_service_send_mms_image_entity(hass, mock_twilio_client):
-    """Test sending MMS using an image entity picture URL."""
+async def test_sms_service_send_mms_image_entity(hass, mock_twilio_client, tmp_path):
+    """Test sending MMS using image snapshot exported under /local."""
     hass.config.external_url = "https://ha.example.com"
-    hass.states.async_set(
-        "image.front_door",
-        "ok",
-        {"entity_picture": "/api/image_proxy/image.front_door?token=imgtoken"},
-    )
+    hass.config.config_dir = str(tmp_path)
 
     service = TwilioSMSNotificationService(
         mock_twilio_client, "+1234567890", hass, None
     )
 
-    await service.async_send_message(
-        "Image snapshot",
-        **{
-            ATTR_TARGET: ["+0987654321"],
-            ATTR_DATA: {
-                ATTR_IMAGE_ENTITY: "image.front_door",
+    with patch(
+        "custom_components.twilio.notify.TwilioSMSNotificationService._async_get_entity_snapshot",
+        new=AsyncMock(return_value=("image/png", b"png-data")),
+    ):
+        await service.async_send_message(
+            "Image snapshot",
+            **{
+                ATTR_TARGET: ["+0987654321"],
+                ATTR_DATA: {
+                    ATTR_IMAGE_ENTITY: "image.front_door",
+                },
             },
-        },
-    )
+        )
 
     call_args = mock_twilio_client.messages.create.call_args[1]
     assert ATTR_MEDIAURL in call_args
-    assert (
-        "https://ha.example.com/api/image_proxy/image.front_door?token=imgtoken"
-        in call_args[ATTR_MEDIAURL]
-    )
+    media_url = call_args[ATTR_MEDIAURL][0]
+    assert media_url.startswith("https://ha.example.com/local/twilio_snapshots/image_front_door_")
+    assert len(list((Path(tmp_path) / "www" / "twilio_snapshots").glob("image_front_door_*.png"))) == 1
 
 
 @pytest.mark.unit

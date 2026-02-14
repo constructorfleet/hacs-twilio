@@ -22,6 +22,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_ACCOUNT_SID,
     CONF_AUTH_TOKEN,
+    CONF_FROM_NUMBER,
     CONF_SENSOR_CLEANUP_HOURS,
     DEFAULT_SENSOR_CLEANUP_HOURS,
     DOMAIN,
@@ -135,6 +136,10 @@ class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Optional(
+                        CONF_FROM_NUMBER,
+                        default=self.config_entry.options.get(CONF_FROM_NUMBER, ""),
+                    ): str,
                     vol.Optional(
                         CONF_SENSOR_CLEANUP_HOURS,
                         default=self.config_entry.options.get(

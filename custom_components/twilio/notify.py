@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import time
 from typing import Any, cast
 import urllib.parse
 
@@ -13,14 +14,18 @@ import voluptuous as vol
 
 from homeassistant.components.notify import (
     PLATFORM_SCHEMA as NOTIFY_PLATFORM_SCHEMA,
+    NotifyEntity,
 )
 from homeassistant.components.notify.const import (
     ATTR_DATA,
     ATTR_TARGET,
 )
 from homeassistant.components.notify.legacy import BaseNotificationService
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from .const import (
@@ -67,6 +72,8 @@ ATTR_STATUS_CALLBACK_METHOD = "status_callback_method"
 ATTR_CAMERA_ENTITY = "camera_entity"
 ATTR_IMAGE_ENTITY = "image_entity"
 ATTR_IMAGE_PATH = "image_path"
+CONF_SMS_TARGET = "sms_target"
+CONF_CALL_TARGET = "call_target"
 
 # Call types
 CALL_TYPE_SIMPLE = "simple"
@@ -88,6 +95,97 @@ PLATFORM_SCHEMA = NOTIFY_PLATFORM_SCHEMA.extend(
         vol.Optional(CONF_PHRASE_MAPPINGS, default={}): dict,
     }
 )
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Set up Twilio notify entities for a config entry."""
+    domain_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if not domain_data or DATA_TWILIO not in domain_data:
+        _LOGGER.error("Twilio client not found for entry %s", entry.entry_id)
+        return
+
+    twilio_client = domain_data[DATA_TWILIO]
+    webhook_url = domain_data.get("webhook_url")
+    from_number = entry.options.get(CONF_FROM_NUMBER, "")
+
+    sms_target = entry.options.get(CONF_SMS_TARGET, from_number)
+    call_target = entry.options.get(CONF_CALL_TARGET, from_number)
+
+    sms_service = TwilioSMSNotificationService(
+        twilio_client, from_number, hass, webhook_url
+    )
+    call_service = TwilioCallNotificationService(
+        twilio_client, from_number, hass=hass, webhook_url=webhook_url
+    )
+
+    async_add_entities(
+        [
+            TwilioNotifyEntity(
+                unique_id=f"{entry.entry_id}_sms",
+                name="Twilio SMS",
+                notification_service=sms_service,
+                target=sms_target,
+            ),
+            TwilioNotifyEntity(
+                unique_id=f"{entry.entry_id}_call",
+                name="Twilio Call",
+                notification_service=call_service,
+                target=call_target,
+            ),
+        ]
+    )
+
+
+class TwilioNotifyEntity(NotifyEntity):
+    """Notify entity that proxies to a Twilio notification service."""
+
+    _attr_should_poll = False
+
+    def __init__(
+        self,
+        unique_id: str,
+        name: str,
+        notification_service: BaseNotificationService,
+        target: str,
+    ) -> None:
+        """Initialize Twilio notify entity."""
+        self._attr_unique_id = unique_id
+        self._attr_name = name
+        self._service = notification_service
+        self._target = target
+
+    @property
+    def available(self) -> bool:
+        """Return whether the entity can send notifications."""
+        return bool(
+            getattr(self._service, "from_number", "")
+            and self._target
+        )
+
+    async def async_send_message(self, message: str, title: str | None = None) -> None:
+        """Send a message through the wrapped Twilio service."""
+        if not self.available:
+            _LOGGER.error(
+                "%s is unavailable: configure from_number and target in options",
+                self.name,
+            )
+            return
+
+        data: dict[str, Any] = {}
+        if title:
+            data["title"] = title
+
+        await self._service.async_send_message(
+            message,
+            **{
+                ATTR_TARGET: [self._target],
+                ATTR_DATA: data,
+            },
+        )
 
 
 def get_service(
@@ -161,8 +259,26 @@ class TwilioSMSNotificationService(BaseNotificationService):
 
         return external_url.rstrip("/")
 
-    def _build_entity_media_url(self, entity_id: str) -> str | None:
-        """Build a publicly reachable media URL for a camera/image entity."""
+    async def _async_get_entity_snapshot(self, entity_id: str) -> tuple[str, bytes] | None:
+        """Fetch snapshot bytes for a camera/image entity."""
+        domain = entity_id.split(".", maxsplit=1)[0]
+        if domain == "camera":
+            from homeassistant.components.camera import async_get_image as camera_get_image
+
+            snapshot = await camera_get_image(self.hass, entity_id)
+            return snapshot.content_type, snapshot.content
+
+        if domain == "image":
+            from homeassistant.components.image import async_get_image as image_get_image
+
+            snapshot = await image_get_image(self.hass, entity_id)
+            return snapshot.content_type, snapshot.content
+
+        _LOGGER.warning("Unsupported entity domain for MMS attachment: %s", entity_id)
+        return None
+
+    async def _build_entity_media_url(self, entity_id: str) -> str | None:
+        """Create snapshot file for entity and return external /local URL."""
         if not self.hass:
             return None
 
@@ -170,25 +286,38 @@ class TwilioSMSNotificationService(BaseNotificationService):
         if not external_base:
             return None
 
-        state = self.hass.states.get(entity_id)
-        if not state:
-            _LOGGER.error("Entity not found: %s", entity_id)
+        try:
+            snapshot_data = await self._async_get_entity_snapshot(entity_id)
+            if snapshot_data is None:
+                return None
+            content_type, content = snapshot_data
+        except HomeAssistantError as err:
+            _LOGGER.error("Failed to get snapshot from %s: %s", entity_id, err)
             return None
 
-        entity_picture = state.attributes.get("entity_picture")
-        if isinstance(entity_picture, str) and entity_picture:
-            if entity_picture.startswith(("http://", "https://")):
-                return entity_picture
-            return f"{external_base}{entity_picture if entity_picture.startswith('/') else f'/{entity_picture}'}"
+        if len(content) > MAX_MMS_MEDIA_SIZE_BYTES:
+            _LOGGER.warning(
+                "Entity snapshot is too large for MMS (max 5MB): %s", entity_id
+            )
+            return None
 
-        domain = entity_id.split(".", maxsplit=1)[0]
-        if domain == "camera":
-            return f"{external_base}/api/camera_proxy/{entity_id}"
-        if domain == "image":
-            return f"{external_base}/api/image_proxy/{entity_id}"
+        extension = {
+            "image/jpeg": "jpg",
+            "image/jpg": "jpg",
+            "image/png": "png",
+            "image/gif": "gif",
+            "image/webp": "webp",
+        }.get(content_type.lower(), "jpg")
 
-        _LOGGER.warning("Unsupported entity domain for MMS attachment: %s", entity_id)
-        return None
+        snapshot_dir = Path(self.hass.config.config_dir) / "www" / "twilio_snapshots"
+        await self.hass.async_add_executor_job(
+            lambda: snapshot_dir.mkdir(parents=True, exist_ok=True)
+        )
+        safe_entity_id = entity_id.replace(".", "_")
+        filename = f"{safe_entity_id}_{int(time.time() * 1000)}.{extension}"
+        snapshot_path = snapshot_dir / filename
+        await self.hass.async_add_executor_job(snapshot_path.write_bytes, content)
+        return f"{external_base}/local/twilio_snapshots/{filename}"
 
     def _build_file_media_url(self, image_path: str) -> str | None:
         """Build a publicly reachable media URL for a local image file."""
@@ -237,18 +366,14 @@ class TwilioSMSNotificationService(BaseNotificationService):
 
         # Support camera entity
         if ATTR_CAMERA_ENTITY in data:
-            if camera_url := self._build_entity_media_url(data[ATTR_CAMERA_ENTITY]):
-                _LOGGER.debug(
-                    "Using camera entity media URL. Size cannot be pre-validated against 5MB."
-                )
+            if camera_url := await self._build_entity_media_url(data[ATTR_CAMERA_ENTITY]):
+                _LOGGER.debug("Using camera snapshot media URL for MMS attachment.")
                 media_urls.append(camera_url)
 
         # Support image entity
         if ATTR_IMAGE_ENTITY in data:
-            if image_url := self._build_entity_media_url(data[ATTR_IMAGE_ENTITY]):
-                _LOGGER.debug(
-                    "Using image entity media URL. Size cannot be pre-validated against 5MB."
-                )
+            if image_url := await self._build_entity_media_url(data[ATTR_IMAGE_ENTITY]):
+                _LOGGER.debug("Using image snapshot media URL for MMS attachment.")
                 media_urls.append(image_url)
 
         # Support image file path
