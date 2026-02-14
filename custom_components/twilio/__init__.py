@@ -42,6 +42,7 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_SERVICES_REGISTERED = "services_registered"
 
 PLATFORMS = [Platform.NOTIFY, Platform.SENSOR]
 
@@ -402,51 +403,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as err:
             _LOGGER.error("Failed to pause call %s: %s", call_sid, err)
 
-    # Register the services
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_MAKE_CALL,
-        async_make_call,
-        schema=vol.Schema({
-            vol.Required("to"): cv.string,
-            vol.Required("from_number"): cv.string,
-            vol.Optional("message", default=""): cv.string,
-        }),
-        supports_response=SupportsResponse.ONLY,
-    )
+    if not hass.data[DOMAIN].get(_SERVICES_REGISTERED):
+        # Register services once for the integration domain.
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_MAKE_CALL,
+            async_make_call,
+            schema=vol.Schema({
+                vol.Required("to"): cv.string,
+                vol.Required("from_number"): cv.string,
+                vol.Optional("message", default=""): cv.string,
+            }),
+            supports_response=SupportsResponse.ONLY,
+        )
 
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SEND_DTMF,
-        async_send_dtmf,
-        schema=vol.Schema({
-            vol.Required(ATTR_CALL_SID): cv.string,
-            vol.Required(ATTR_DTMF_DIGITS): cv.string,
-        }),
-    )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SEND_DTMF,
+            async_send_dtmf,
+            schema=vol.Schema({
+                vol.Required(ATTR_CALL_SID): cv.string,
+                vol.Required(ATTR_DTMF_DIGITS): cv.string,
+            }),
+        )
 
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_START_RECORDING,
-        async_start_recording,
-        schema=vol.Schema({
-            vol.Required(ATTR_CALL_SID): cv.string,
-            vol.Optional("max_length", default=3600): vol.All(vol.Coerce(int), vol.Range(min=1, max=14400)),
-            vol.Optional("recording_status_callback", default=False): cv.boolean,
-            vol.Optional("transcribe", default=False): cv.boolean,
-            vol.Optional("transcribe_callback", default=False): cv.boolean,
-        }),
-    )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_START_RECORDING,
+            async_start_recording,
+            schema=vol.Schema({
+                vol.Required(ATTR_CALL_SID): cv.string,
+                vol.Optional("max_length", default=3600): vol.All(vol.Coerce(int), vol.Range(min=1, max=14400)),
+                vol.Optional("recording_status_callback", default=False): cv.boolean,
+                vol.Optional("transcribe", default=False): cv.boolean,
+                vol.Optional("transcribe_callback", default=False): cv.boolean,
+            }),
+        )
 
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_PAUSE,
-        async_pause_call,
-        schema=vol.Schema({
-            vol.Required(ATTR_CALL_SID): cv.string,
-            vol.Optional("length", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=3600)),
-        }),
-    )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_PAUSE,
+            async_pause_call,
+            schema=vol.Schema({
+                vol.Required(ATTR_CALL_SID): cv.string,
+                vol.Optional("length", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=3600)),
+            }),
+        )
+        hass.data[DOMAIN][_SERVICES_REGISTERED] = True
 
     return True
 
@@ -460,14 +463,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Unregister webhook
         webhook.async_unregister(hass, entry.data[CONF_WEBHOOK_ID])
 
-        # Unregister services
-        hass.services.async_remove(DOMAIN, SERVICE_MAKE_CALL)
-        hass.services.async_remove(DOMAIN, SERVICE_SEND_DTMF)
-        hass.services.async_remove(DOMAIN, SERVICE_START_RECORDING)
-        hass.services.async_remove(DOMAIN, SERVICE_PAUSE)
-
         # Remove data
         hass.data[DOMAIN].pop(entry.entry_id)
+
+        remaining_clients = [
+            entry_data
+            for entry_data in hass.data[DOMAIN].values()
+            if isinstance(entry_data, dict) and DATA_TWILIO in entry_data
+        ]
+        if not remaining_clients:
+            # Unregister services once the last Twilio entry is removed.
+            hass.services.async_remove(DOMAIN, SERVICE_MAKE_CALL)
+            hass.services.async_remove(DOMAIN, SERVICE_SEND_DTMF)
+            hass.services.async_remove(DOMAIN, SERVICE_START_RECORDING)
+            hass.services.async_remove(DOMAIN, SERVICE_PAUSE)
+            hass.data[DOMAIN].pop(_SERVICES_REGISTERED, None)
 
     return unload_ok
 
