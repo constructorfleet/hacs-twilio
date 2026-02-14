@@ -6,6 +6,7 @@ DOMAIN = "twilio"
 CONF_ACCOUNT_SID = "account_sid"
 CONF_AUTH_TOKEN = "auth_token"
 CONF_FROM_NUMBER = "from_number"
+CONF_PHONE_NUMBERS = "phone_numbers"
 CONF_SENSOR_CLEANUP_HOURS = "sensor_cleanup_hours"
 
 # Data constants

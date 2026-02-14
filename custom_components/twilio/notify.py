@@ -9,55 +9,42 @@ from typing import Any, cast
 import urllib.parse
 
 from twilio.base.exceptions import TwilioRestException
-from twilio.twiml.voice_response import Start, VoiceResponse, Gather
-import voluptuous as vol
+from twilio.twiml.voice_response import Gather, Start, VoiceResponse
 
-from homeassistant.components.notify import (
-    PLATFORM_SCHEMA as NOTIFY_PLATFORM_SCHEMA,
-    NotifyEntity,
-)
-from homeassistant.components.notify.const import (
-    ATTR_DATA,
-    ATTR_TARGET,
-)
-from homeassistant.components.notify.legacy import BaseNotificationService
+from homeassistant.components.notify import NotifyEntity
+from homeassistant.components.notify.const import ATTR_DATA, ATTR_TARGET
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    CONF_FROM_NUMBER,
-    CONF_VOICE,
-    CONF_LANGUAGE,
-    CONF_PHRASE_MAPPINGS,
-    CONF_TIMEOUT,
-    CONF_NUM_DIGITS,
-    CONF_FINISH_ON_KEY,
-    CONF_TRANSCRIBE_LANGUAGE,
-    CONF_PROFANITY_FILTER,
-    CONF_PARTIAL_RESULTS,
-    CONF_AUTOMATIC_PUNCTUATION,
-    DATA_TWILIO,
-    DOMAIN,
     ATTR_MEDIAURL,
-    DEFAULT_TIMEOUT,
-    DEFAULT_NUM_DIGITS,
+    CONF_AUTOMATIC_PUNCTUATION,
+    CONF_FINISH_ON_KEY,
+    CONF_FROM_NUMBER,
+    CONF_LANGUAGE,
+    CONF_NUM_DIGITS,
+    CONF_PARTIAL_RESULTS,
+    CONF_PHONE_NUMBERS,
+    CONF_PHRASE_MAPPINGS,
+    CONF_PROFANITY_FILTER,
+    CONF_TIMEOUT,
+    CONF_TRANSCRIBE_LANGUAGE,
+    CONF_VOICE,
+    DATA_TWILIO,
     DEFAULT_FINISH_ON_KEY,
-    DEFAULT_VOICE,
     DEFAULT_LANGUAGE,
+    DEFAULT_NUM_DIGITS,
+    DEFAULT_TIMEOUT,
     DEFAULT_TRANSCRIBE_LANGUAGE,
+    DEFAULT_VOICE,
+    DOMAIN,
 )
 from .helper import make_call, make_simple_call
 
 _LOGGER = logging.getLogger(__name__)
 MAX_MMS_MEDIA_SIZE_BYTES = 5 * 1024 * 1024
-
-# Platform types
-PLATFORM_SMS = "sms"
-PLATFORM_CALL = "call"
 
 # Notify service attributes
 ATTR_CALL_TYPE = "call_type"
@@ -72,184 +59,108 @@ ATTR_STATUS_CALLBACK_METHOD = "status_callback_method"
 ATTR_CAMERA_ENTITY = "camera_entity"
 ATTR_IMAGE_ENTITY = "image_entity"
 ATTR_IMAGE_PATH = "image_path"
-CONF_SMS_TARGET = "sms_target"
-CONF_CALL_TARGET = "call_target"
 
 # Call types
 CALL_TYPE_SIMPLE = "simple"
 CALL_TYPE_TWIML = "twiml"
 CALL_TYPE_INTERACTIVE = "interactive"
 
-PLATFORM_SCHEMA = NOTIFY_PLATFORM_SCHEMA.extend(
-    {
-        vol.Required(CONF_FROM_NUMBER): vol.All(
-            cv.string,
-            vol.Match(
-                r"^\+?[1-9]\d{1,14}$|"
-                r"^(?=.{1,11}$)[a-zA-Z0-9\s]*"
-                r"[a-zA-Z][a-zA-Z0-9\s]*$"
-            ),
-        ),
-        vol.Optional(CONF_VOICE, default=DEFAULT_VOICE): cv.string,
-        vol.Optional(CONF_LANGUAGE, default=DEFAULT_LANGUAGE): cv.string,
-        vol.Optional(CONF_PHRASE_MAPPINGS, default={}): dict,
-    }
-)
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities: AddConfigEntryEntitiesCallback,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Twilio notify entities for a config entry."""
-    domain_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if not domain_data or DATA_TWILIO not in domain_data:
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    twilio_client = entry_data.get(DATA_TWILIO)
+    webhook_url = entry_data.get("webhook_url")
+
+    if not twilio_client:
         _LOGGER.error("Twilio client not found for entry %s", entry.entry_id)
         return
 
-    twilio_client = domain_data[DATA_TWILIO]
-    webhook_url = domain_data.get("webhook_url")
-    from_number = entry.options.get(CONF_FROM_NUMBER, "")
+    options = getattr(entry, "options", {}) or {}
+    configured_numbers = options.get(CONF_PHONE_NUMBERS, [])
+    if not isinstance(configured_numbers, list):
+        configured_numbers = []
+    configured_numbers = [
+        str(number).strip() for number in configured_numbers if str(number).strip()
+    ]
 
-    sms_target = entry.options.get(CONF_SMS_TARGET, from_number)
-    call_target = entry.options.get(CONF_CALL_TARGET, from_number)
+    # Backward compatibility for installs that still have single from_number option.
+    if not configured_numbers:
+        fallback_number = options.get(CONF_FROM_NUMBER, "")
+        if isinstance(fallback_number, str) and fallback_number:
+            configured_numbers = [fallback_number]
 
-    sms_service = TwilioSMSNotificationService(
-        twilio_client, from_number, hass, webhook_url
-    )
-    call_service = TwilioCallNotificationService(
-        twilio_client, from_number, hass=hass, webhook_url=webhook_url
-    )
+    if not configured_numbers:
+        _LOGGER.warning("Skipping Twilio notify setup: no phone numbers are configured")
+        return
 
-    async_add_entities(
-        [
-            TwilioNotifyEntity(
-                unique_id=f"{entry.entry_id}_sms",
-                name="Twilio SMS",
-                notification_service=sms_service,
-                target=sms_target,
-            ),
-            TwilioNotifyEntity(
-                unique_id=f"{entry.entry_id}_call",
-                name="Twilio Call",
-                notification_service=call_service,
-                target=call_target,
-            ),
-        ]
-    )
+    voice = options.get(CONF_VOICE, DEFAULT_VOICE)
+    language = options.get(CONF_LANGUAGE, DEFAULT_LANGUAGE)
+    phrase_mappings = options.get(CONF_PHRASE_MAPPINGS, {})
+    if not isinstance(phrase_mappings, dict):
+        phrase_mappings = {}
+
+    entities: list[NotifyEntity] = []
+    for number in configured_numbers:
+        entities.extend(
+            [
+                TwilioSMSNotificationEntity(
+                    twilio_client=twilio_client,
+                    from_number=number,
+                    webhook_url=webhook_url,
+                    entry_id=entry.entry_id,
+                ),
+                TwilioCallNotificationEntity(
+                    twilio_client=twilio_client,
+                    from_number=number,
+                    voice=voice,
+                    language=language,
+                    phrase_mappings=phrase_mappings,
+                    webhook_url=webhook_url,
+                    entry_id=entry.entry_id,
+                ),
+            ]
+        )
+
+    async_add_entities(entities)
 
 
-class TwilioNotifyEntity(NotifyEntity):
-    """Notify entity that proxies to a Twilio notification service."""
+def _phone_number_key(phone_number: str) -> str:
+    """Normalize phone number for ids."""
+    return "".join(char for char in phone_number if char.isalnum())
+
+
+class TwilioSMSNotificationEntity(NotifyEntity):
+    """Twilio notify entity for SMS/MMS."""
 
     _attr_should_poll = False
 
     def __init__(
         self,
-        unique_id: str,
-        name: str,
-        notification_service: BaseNotificationService,
-        target: str,
+        twilio_client: Any,
+        from_number: str,
+        webhook_url: str | None,
+        entry_id: str,
     ) -> None:
-        """Initialize Twilio notify entity."""
-        self._attr_unique_id = unique_id
-        self._attr_name = name
-        self._service = notification_service
-        self._target = target
-
-    @property
-    def available(self) -> bool:
-        """Return whether the entity can send notifications."""
-        return bool(
-            getattr(self._service, "from_number", "")
-            and self._target
-        )
-
-    async def async_send_message(self, message: str, title: str | None = None) -> None:
-        """Send a message through the wrapped Twilio service."""
-        if not self.available:
-            _LOGGER.error(
-                "%s is unavailable: configure from_number and target in options",
-                self.name,
-            )
-            return
-
-        data: dict[str, Any] = {}
-        if title:
-            data["title"] = title
-
-        await self._service.async_send_message(
-            message,
-            **{
-                ATTR_TARGET: [self._target],
-                ATTR_DATA: data,
-            },
-        )
-
-
-def get_service(
-    hass: HomeAssistant,
-    config: ConfigType,
-    discovery_info: DiscoveryInfoType | None = None,
-) -> BaseNotificationService | None:
-    """Get the notification service."""
-    # Determine platform type from config or discovery_info
-    platform_type = PLATFORM_SMS
-    if discovery_info:
-        platform_type = discovery_info.get("platform_type", PLATFORM_SMS)
-
-    # Get Twilio client and webhook info from hass.data
-    twilio_client = None
-    webhook_url = None
-    if DATA_TWILIO in hass.data:
-        twilio_client = hass.data[DATA_TWILIO]
-    elif DOMAIN in hass.data:
-        # Try to get from config entry
-        for entry_id, entry_data in hass.data[DOMAIN].items():
-            if DATA_TWILIO in entry_data:
-                twilio_client = entry_data[DATA_TWILIO]
-                webhook_url = entry_data.get("webhook_url")
-                break
-
-    if not twilio_client:
-        _LOGGER.error("Twilio client not found in hass.data")
-        return None
-
-    if platform_type == PLATFORM_CALL:
-        return TwilioCallNotificationService(
-            twilio_client,
-            config[CONF_FROM_NUMBER],
-            config.get(CONF_VOICE, DEFAULT_VOICE),
-            config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE),
-            config.get(CONF_PHRASE_MAPPINGS, {}),
-            hass,
-            webhook_url,
-        )
-    else:
-        return TwilioSMSNotificationService(
-            twilio_client,
-            config[CONF_FROM_NUMBER],
-            hass,
-            webhook_url,
-        )
-
-
-class TwilioSMSNotificationService(BaseNotificationService):
-    """Implement the notification service for Twilio SMS/MMS."""
-
-    def __init__(self, twilio_client, from_number, hass, webhook_url=None):
-        """Initialize the service."""
+        """Initialize the entity."""
         self.client = twilio_client
         self.from_number = from_number
-        self.hass = hass
         self.webhook_url = webhook_url
+        self._attr_unique_id = f"{entry_id}_twilio_sms_{_phone_number_key(from_number)}"
+        self._attr_name = f"Twilio SMS {from_number}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{entry_id}_{_phone_number_key(from_number)}")},
+            "name": f"Twilio {from_number}",
+            "manufacturer": "Twilio",
+            "model": "Phone Number",
+        }
 
     def _get_external_base_url(self) -> str | None:
         """Return configured Home Assistant external URL, if available."""
-        if not self.hass:
-            return None
-
         external_url = getattr(self.hass.config, "external_url", None)
         if not external_url:
             _LOGGER.warning(
@@ -259,17 +170,23 @@ class TwilioSMSNotificationService(BaseNotificationService):
 
         return external_url.rstrip("/")
 
-    async def _async_get_entity_snapshot(self, entity_id: str) -> tuple[str, bytes] | None:
+    async def _async_get_entity_snapshot(
+        self, entity_id: str
+    ) -> tuple[str, bytes] | None:
         """Fetch snapshot bytes for a camera/image entity."""
         domain = entity_id.split(".", maxsplit=1)[0]
         if domain == "camera":
-            from homeassistant.components.camera import async_get_image as camera_get_image
+            from homeassistant.components.camera import (
+                async_get_image as camera_get_image,
+            )
 
             snapshot = await camera_get_image(self.hass, entity_id)
             return snapshot.content_type, snapshot.content
 
         if domain == "image":
-            from homeassistant.components.image import async_get_image as image_get_image
+            from homeassistant.components.image import (
+                async_get_image as image_get_image,
+            )
 
             snapshot = await image_get_image(self.hass, entity_id)
             return snapshot.content_type, snapshot.content
@@ -279,9 +196,6 @@ class TwilioSMSNotificationService(BaseNotificationService):
 
     async def _build_entity_media_url(self, entity_id: str) -> str | None:
         """Create snapshot file for entity and return external /local URL."""
-        if not self.hass:
-            return None
-
         external_base = self._get_external_base_url()
         if not external_base:
             return None
@@ -347,14 +261,20 @@ class TwilioSMSNotificationService(BaseNotificationService):
 
         return f"{external_base}/local/{relative_path.as_posix()}"
 
-    async def async_send_message(self, message: str = "", **kwargs: Any) -> None:
+    async def async_send_message(
+        self, message: str = "", title: str | None = None, **kwargs: Any
+    ) -> None:
         """Send SMS/MMS to specified target user."""
+        del title
         targets = kwargs.get(ATTR_TARGET)
         data = kwargs.get(ATTR_DATA) or {}
-        twilio_args = {"body": message, "from_": self.from_number}
+        twilio_args: dict[str, str | list[str]] = {
+            "body": message,
+            "from_": self.from_number,
+        }
 
         # Handle media URLs for MMS
-        media_urls = []
+        media_urls: list[str] = []
 
         # Support direct media_url parameter (existing functionality)
         if ATTR_MEDIAURL in data:
@@ -366,7 +286,9 @@ class TwilioSMSNotificationService(BaseNotificationService):
 
         # Support camera entity
         if ATTR_CAMERA_ENTITY in data:
-            if camera_url := await self._build_entity_media_url(data[ATTR_CAMERA_ENTITY]):
+            if camera_url := await self._build_entity_media_url(
+                data[ATTR_CAMERA_ENTITY]
+            ):
                 _LOGGER.debug("Using camera snapshot media URL for MMS attachment.")
                 media_urls.append(camera_url)
 
@@ -413,17 +335,11 @@ class TwilioSMSNotificationService(BaseNotificationService):
             except TwilioRestException as exc:
                 _LOGGER.error("Failed to send SMS/MMS to %s: %s", target, exc)
 
-    def send_message(self, message: str = "", **kwargs: Any) -> None:
-        """Send message (sync wrapper)."""
-        # Use hass to schedule the async task properly
-        if self.hass:
-            self.hass.async_create_task(self.async_send_message(message, **kwargs))
-        else:
-            _LOGGER.error("Cannot send message: HomeAssistant instance not available")
 
+class TwilioCallNotificationEntity(NotifyEntity):
+    """Twilio notify entity for Voice Calls."""
 
-class TwilioCallNotificationService(BaseNotificationService):
-    """Implement the notification service for Twilio Voice Calls with interactive features."""
+    _attr_should_poll = False
 
     def __init__(
         self,
@@ -432,21 +348,32 @@ class TwilioCallNotificationService(BaseNotificationService):
         voice=DEFAULT_VOICE,
         language=DEFAULT_LANGUAGE,
         phrase_mappings=None,
-        hass: HomeAssistant | None = None,
         webhook_url=None,
+        entry_id: str = "",
     ):
-        """Initialize the service."""
+        """Initialize the entity."""
         self.client = twilio_client
         self.from_number = from_number
         self.voice = voice
         self.language = language
         self.phrase_mappings = phrase_mappings or {}
         self.webhook_url = webhook_url
-        if hass:
-            self.hass = hass
+        self._attr_unique_id = (
+            f"{entry_id}_twilio_call_{_phone_number_key(from_number)}"
+        )
+        self._attr_name = f"Twilio Call {from_number}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{entry_id}_{_phone_number_key(from_number)}")},
+            "name": f"Twilio {from_number}",
+            "manufacturer": "Twilio",
+            "model": "Phone Number",
+        }
 
-    def send_message(self, message: str = "", **kwargs: Any) -> None:
+    async def async_send_message(
+        self, message: str = "", title: str | None = None, **kwargs: Any
+    ) -> None:
         """Make voice call to specified target users."""
+        del title
         if not (targets := kwargs.get(ATTR_TARGET)):
             _LOGGER.warning("At least 1 target is required")
             return
@@ -454,14 +381,8 @@ class TwilioCallNotificationService(BaseNotificationService):
         data = kwargs.get(ATTR_DATA) or {}
         call_type = data.get(ATTR_CALL_TYPE, CALL_TYPE_SIMPLE)
 
-        # Schedule async calls for each target
-        if self.hass:
-            for target in targets:
-                self.hass.async_create_task(
-                    self._async_make_call(target, message, call_type, data)
-                )
-        else:
-            _LOGGER.error("Cannot make calls: HomeAssistant instance not available")
+        for target in targets:
+            await self._async_make_call(target, message, call_type, data)
 
     async def _async_make_call(
         self, target: str, message: str, call_type: str, data: dict[str, Any]

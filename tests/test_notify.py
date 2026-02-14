@@ -9,11 +9,12 @@ from custom_components.twilio.notify import (
     ATTR_CAMERA_ENTITY,
     ATTR_IMAGE_ENTITY,
     ATTR_IMAGE_PATH,
+    NOTIFY_SERVICE_CALL,
+    NOTIFY_SERVICE_SMS,
     TwilioSMSNotificationService,
     TwilioCallNotificationService,
-    CONF_CALL_TARGET,
-    CONF_SMS_TARGET,
-    async_setup_entry,
+    async_register_entry_notify_services,
+    async_unregister_entry_notify_services,
     get_service,
 )
 from custom_components.twilio.const import (
@@ -22,32 +23,27 @@ from custom_components.twilio.const import (
     DATA_TWILIO,
     DOMAIN,
 )
-from homeassistant.config_entries import ConfigEntry
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_async_setup_entry(hass):
-    """Test notify platform config entry setup hook."""
-    entry = MagicMock(spec=ConfigEntry)
-    entry.entry_id = "entry_1"
-    entry.options = {
-        CONF_FROM_NUMBER: "+1234567890",
-        CONF_SMS_TARGET: "+1987654321",
-        CONF_CALL_TARGET: "+1098765432",
-    }
-    hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {
-        DATA_TWILIO: MagicMock(),
-        "webhook_url": "https://example.com/webhook",
-    }
-    async_add_entities = MagicMock()
+async def test_async_register_unregister_entry_notify_services(hass, mock_twilio_client):
+    """Test config-entry notify services registration lifecycle."""
+    services = await async_register_entry_notify_services(
+        hass=hass,
+        twilio_client=mock_twilio_client,
+        webhook_url="https://example.com/webhook",
+        from_number="+1234567890",
+    )
 
-    await async_setup_entry(hass, entry, async_add_entities)
+    assert len(services) == 2
+    assert hass.services.has_service("notify", NOTIFY_SERVICE_SMS)
+    assert hass.services.has_service("notify", NOTIFY_SERVICE_CALL)
 
-    async_add_entities.assert_called_once()
-    entities = async_add_entities.call_args[0][0]
-    assert len(entities) == 2
+    await async_unregister_entry_notify_services(services)
+
+    assert not hass.services.has_service("notify", NOTIFY_SERVICE_SMS)
+    assert not hass.services.has_service("notify", NOTIFY_SERVICE_CALL)
 
 
 @pytest.mark.unit

@@ -29,11 +29,48 @@ from .const import (
     ATTR_FULL_TRANSCRIPTION,
     ATTR_PHONE_NUMBER,
     ATTR_TO,
+    CONF_FROM_NUMBER,
+    CONF_PHONE_NUMBERS,
     CONF_SENSOR_CLEANUP_HOURS,
     DEFAULT_SENSOR_CLEANUP_HOURS,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+TERMINAL_CALL_STATES = [
+    "completed",
+    "busy",
+    "no-answer",
+    "failed",
+    "canceled",
+]
+
+
+def _normalize_phone_number(value: str | None) -> str:
+    """Normalize phone numbers for comparison."""
+    if not value:
+        return ""
+    return "".join(char for char in str(value).strip() if char.isalnum() or char == "+")
+
+
+def _phone_number_key(phone_number: str) -> str:
+    """Normalize phone number for ids."""
+    return "".join(char for char in phone_number if char.isalnum())
+
+
+def _resolve_twilio_number(
+    direction: str, from_number: str, to_number: str, configured_numbers: set[str]
+) -> str:
+    """Resolve which Twilio number handled this call."""
+    normalized_from = _normalize_phone_number(from_number)
+    normalized_to = _normalize_phone_number(to_number)
+    if normalized_from in configured_numbers:
+        return from_number
+    if normalized_to in configured_numbers:
+        return to_number
+    if direction == "outbound-api":
+        return from_number
+    return to_number or from_number
 
 
 async def async_setup_entry(
@@ -46,6 +83,18 @@ async def async_setup_entry(
     cleanup_hours = config_entry.options.get(
         CONF_SENSOR_CLEANUP_HOURS, DEFAULT_SENSOR_CLEANUP_HOURS
     )
+    configured_numbers = config_entry.options.get(CONF_PHONE_NUMBERS, [])
+    if not isinstance(configured_numbers, list):
+        configured_numbers = []
+    if not configured_numbers:
+        fallback_number = config_entry.options.get(CONF_FROM_NUMBER, "")
+        if isinstance(fallback_number, str) and fallback_number:
+            configured_numbers = [fallback_number]
+    configured_number_set = {
+        _normalize_phone_number(number)
+        for number in configured_numbers
+        if _normalize_phone_number(number)
+    }
 
     # Store reference to async_add_entities for dynamic entity creation
     hass.data.setdefault(DOMAIN, {})
@@ -84,13 +133,7 @@ async def async_setup_entry(
             state = hass.states.get(entity.entity_id)
             if state:
                 # Check if it's a completed call
-                if state.state in [
-                    "completed",
-                    "busy",
-                    "no-answer",
-                    "failed",
-                    "canceled",
-                ]:
+                if state.state in TERMINAL_CALL_STATES:
                     # Try to get end_time from attributes, otherwise use last_changed
                     end_time_str = state.attributes.get("end_time")
                     if end_time_str:
@@ -157,7 +200,9 @@ async def async_setup_entry(
             sensor.update_from_event(event.data)
         else:
             # Create new sensor for this call
-            sensor = TwilioCallSensor(call_sid, event.data)
+            sensor = TwilioCallSensor(
+                call_sid, event.data, config_entry.entry_id, configured_number_set
+            )
             entities_dict[call_sid] = sensor
             async_add_entities([sensor], True)
 
@@ -235,13 +280,24 @@ async def async_setup_entry(
 class TwilioCallSensor(SensorEntity):
     """Representation of a Twilio voice call sensor."""
 
-    def __init__(self, call_sid: str, call_data: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        call_sid: str,
+        call_data: dict[str, Any],
+        entry_id: str,
+        configured_numbers: set[str],
+    ) -> None:
         """Initialize the sensor."""
+        self._entry_id = entry_id
+        self._configured_numbers = configured_numbers
         self._call_sid = call_sid
         self._call_status = call_data.get(ATTR_CALL_STATUS, "unknown")
         self._from = call_data.get(ATTR_FROM, "")
         self._to = call_data.get(ATTR_TO, "")
         self._direction = call_data.get("direction", "")
+        self._twilio_number = _resolve_twilio_number(
+            self._direction, self._from, self._to, self._configured_numbers
+        )
         self._current_transcription = ""
         self._full_transcription = []
         self._attr_should_poll = False
@@ -260,15 +316,12 @@ class TwilioCallSensor(SensorEntity):
             self._to = event_data[ATTR_TO]
         if "direction" in event_data:
             self._direction = event_data["direction"]
+        self._twilio_number = _resolve_twilio_number(
+            self._direction, self._from, self._to, self._configured_numbers
+        )
         if self._call_status in ["in-progress", "ringing", "queued"]:
             self._attr_icon = "mdi:phone-in-talk"
-        elif self._call_status in [
-            "completed",
-            "busy",
-            "no-answer",
-            "failed",
-            "canceled",
-        ]:
+        elif self._call_status in TERMINAL_CALL_STATES:
             self._attr_icon = "mdi:phone-hangup"
         else:
             self._attr_icon = "mdi:phone"
@@ -276,15 +329,26 @@ class TwilioCallSensor(SensorEntity):
 
         self._attr_extra_state_attributes = {
             ATTR_CALL_SID: self._call_sid,
-            ATTR_PHONE_NUMBER: (
-                self._to if self._direction == "outbound-api" else self._from
-            ),
+            ATTR_PHONE_NUMBER: self._twilio_number,
             ATTR_FROM: self._from,
             ATTR_TO: self._to,
             "direction": self._direction,
             ATTR_CURRENT_TRANSCRIPTION: self._current_transcription,
             ATTR_FULL_TRANSCRIPTION: "\n".join(self._full_transcription),
         }
+        if self._twilio_number:
+            self._attr_device_info = {
+                "identifiers": {
+                    (
+                        DOMAIN,
+                        f"{self._entry_id}_{_phone_number_key(self._twilio_number)}",
+                    )
+                },
+                "name": f"Twilio {self._twilio_number}",
+                "manufacturer": "Twilio",
+                "model": "Phone Number",
+            }
+
         if self._end_time:
             self._attr_extra_state_attributes["end_time"] = self._end_time.isoformat()
 
