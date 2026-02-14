@@ -1,0 +1,93 @@
+blueprint:
+  name: Interactive Phone Menu
+  description: Create an interactive phone menu that responds to DTMF key presses
+  domain: automation
+  input:
+    trigger_entity:
+      name: Trigger Entity
+      description: Entity that triggers the phone menu
+      selector:
+        entity:
+    phone_number:
+      name: Phone Number
+      description: Phone number to call (include country code, e.g., +1234567890)
+      selector:
+        text:
+    call_notifier:
+      name: Call Notifier
+      description: The Twilio call notifier service
+      default: notify.twilio_call
+      selector:
+        text:
+    menu_message:
+      name: Menu Message
+      description: The voice message to play
+      default: "Press 1 to turn on lights, press 2 to lock doors, press 3 to arm alarm."
+      selector:
+        text:
+          multiline: true
+    action_1_entity:
+      name: Action 1 Entity
+      description: Entity to control when pressing 1
+      selector:
+        entity:
+    action_1_service:
+      name: Action 1 Service
+      description: Service to call for action 1 (e.g., light.turn_on)
+      default: light.turn_on
+      selector:
+        text:
+    action_2_entity:
+      name: Action 2 Entity
+      description: Entity to control when pressing 2
+      selector:
+        entity:
+    action_2_service:
+      name: Action 2 Service
+      description: Service to call for action 2 (e.g., lock.lock)
+      default: lock.lock
+      selector:
+        text:
+
+trigger:
+  - platform: state
+    entity_id: !input trigger_entity
+
+action:
+  # Make the phone call with interactive menu
+  - service: !input call_notifier
+    data:
+      message: !input menu_message
+      target:
+        - !input phone_number
+      data:
+        call_type: "interactive"
+        gather_enabled: true
+        gather_config:
+          num_digits: 1
+          timeout: 10
+          finish_on_key: "#"
+
+  # Wait for DTMF response
+  - wait_for_trigger:
+      - platform: event
+        event_type: twilio_dtmf_received
+    timeout: 30
+
+  # Execute action based on key pressed
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ wait.trigger.event.data.digits == '1' }}"
+        sequence:
+          - service: !input action_1_service
+            target:
+              entity_id: !input action_1_entity
+      
+      - conditions:
+          - condition: template
+            value_template: "{{ wait.trigger.event.data.digits == '2' }}"
+        sequence:
+          - service: !input action_2_service
+            target:
+              entity_id: !input action_2_entity

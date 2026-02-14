@@ -1,0 +1,192 @@
+# Example configuration for Twilio Integration
+
+# Basic Twilio Configuration (Legacy YAML - UI configuration is recommended)
+twilio:
+  account_sid: YOUR_TWILIO_ACCOUNT_SID
+  auth_token: YOUR_TWILIO_AUTH_TOKEN
+
+# SMS/MMS Notifier
+notify:
+  - name: twilio_sms
+    platform: twilio
+    from_number: "+1234567890"  # Your Twilio phone number
+
+  # Voice Call Notifier with advanced features
+  - name: twilio_call
+    platform: twilio
+    from_number: "+1234567890"  # Your Twilio phone number
+    voice: "alice"  # Options: alice, man, woman
+    language: "en-US"  # Language code
+    phrase_mappings:
+      "press 1 for english": "1"
+      "press 2 for spanish": "2"
+      "enter your 4 digit code": "1234"
+      "press pound to continue": "#"
+
+# Example Automations
+
+automation:
+  # Send SMS alert when door opens
+  - alias: "Door Open Alert"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.front_door
+        to: "on"
+    action:
+      - service: notify.twilio_sms
+        data:
+          message: "Front door opened at {{ now().strftime('%I:%M %p') }}"
+          target:
+            - "+1234567890"
+
+  # Send MMS with camera snapshot
+  - alias: "Motion Detection with Photo"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.motion_sensor
+        to: "on"
+    action:
+      - service: camera.snapshot
+        target:
+          entity_id: camera.front_door
+        data:
+          filename: /tmp/snapshot.jpg
+      
+      - service: notify.twilio_sms
+        data:
+          message: "Motion detected!"
+          target:
+            - "+1234567890"
+          data:
+            media_url:
+              - "https://your-ha-instance.com/local/snapshot.jpg"
+
+  # Make voice call for emergency
+  - alias: "Emergency Voice Alert"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.smoke_detector
+        to: "on"
+    action:
+      - service: notify.twilio_call
+        data:
+          message: "Emergency! Smoke detected in your home. Please check immediately and call 911 if necessary."
+          target:
+            - "+1234567890"
+
+  # Interactive voice menu
+  - alias: "Voice Control Menu"
+    trigger:
+      - platform: state
+        entity_id: input_boolean.voice_menu
+        to: "on"
+    action:
+      - service: notify.twilio_call
+        data:
+          message: "Welcome to Home Assistant voice control. Press 1 to turn on all lights. Press 2 to lock all doors. Press 3 for status update."
+          target:
+            - "+1234567890"
+          data:
+            call_type: "interactive"
+            gather_enabled: true
+            gather_config:
+              num_digits: 1
+              timeout: 10
+              finish_on_key: "#"
+
+  # Handle DTMF responses
+  - alias: "Process Voice Menu Selection"
+    trigger:
+      - platform: event
+        event_type: twilio_dtmf_received
+    action:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.event.data.digits == '1' }}"
+            sequence:
+              - service: light.turn_on
+                target:
+                  entity_id: all
+          
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.event.data.digits == '2' }}"
+            sequence:
+              - service: lock.lock
+                target:
+                  entity_id: all
+          
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.event.data.digits == '3' }}"
+            sequence:
+              - service: notify.twilio_sms
+                data:
+                  message: "Home Status: All systems operational"
+                  target:
+                    - "{{ trigger.event.data.from }}"
+
+  # Handle incoming SMS
+  - alias: "Process Incoming SMS"
+    trigger:
+      - platform: event
+        event_type: twilio_sms_received
+    action:
+      - service: notify.persistent_notification
+        data:
+          title: "SMS from {{ trigger.event.data.from }}"
+          message: "{{ trigger.event.data.body }}"
+
+  # Handle incoming calls
+  - alias: "Log Incoming Calls"
+    trigger:
+      - platform: event
+        event_type: twilio_call_received
+    action:
+      - service: logbook.log
+        data:
+          name: "Incoming Call"
+          message: "Call from {{ trigger.event.data.from }} at {{ now().strftime('%I:%M %p') }}"
+          entity_id: sensor.phone_log
+
+  # Process voice transcriptions
+  - alias: "Handle Voice Transcription"
+    trigger:
+      - platform: event
+        event_type: twilio_transcription_received
+    action:
+      - service: notify.mobile_app
+        data:
+          title: "Voice Message Received"
+          message: "{{ trigger.event.data.transcription_text }}"
+
+  # Record call with transcription
+  - alias: "Voice Message System"
+    trigger:
+      - platform: state
+        entity_id: input_boolean.voice_message
+        to: "on"
+    action:
+      - service: notify.twilio_call
+        data:
+          message: "Please leave a message after the beep. Press star when finished."
+          target:
+            - "+1234567890"
+          data:
+            call_type: "interactive"
+            record_enabled: true
+            transcribe_enabled: true
+            gather_config:
+              finish_on_key: "*"
+              timeout: 60
+
+# Input helpers for testing
+input_boolean:
+  voice_menu:
+    name: Trigger Voice Menu
+    icon: mdi:phone
+  
+  voice_message:
+    name: Voice Message System
+    icon: mdi:voicemail

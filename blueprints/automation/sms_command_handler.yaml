@@ -1,0 +1,99 @@
+blueprint:
+  name: SMS Command Handler
+  description: Execute Home Assistant actions based on incoming SMS commands
+  domain: automation
+  input:
+    command_prefix:
+      name: Command Prefix
+      description: Prefix for SMS commands (e.g., "HA:")
+      default: "HA:"
+      selector:
+        text:
+    authorized_numbers:
+      name: Authorized Phone Numbers
+      description: Comma-separated list of authorized phone numbers (include country code)
+      selector:
+        text:
+          multiline: true
+
+trigger:
+  - platform: event
+    event_type: twilio_sms_received
+
+condition:
+  - condition: template
+    value_template: >
+      {% set authorized = (!input authorized_numbers).split(',') | map('trim') | list %}
+      {{ trigger.event.data.from in authorized }}
+  - condition: template
+    value_template: >
+      {{ trigger.event.data.body.startswith(!input command_prefix) }}
+
+action:
+  - variables:
+      command: >
+        {{ trigger.event.data.body.replace(!input command_prefix, '').strip().lower() }}
+  
+  - choose:
+      # Turn on/off lights
+      - conditions:
+          - condition: template
+            value_template: "{{ 'lights on' in command }}"
+        sequence:
+          - service: light.turn_on
+            target:
+              entity_id: all
+          - service: notify.twilio_sms
+            data:
+              message: "All lights turned on"
+              target:
+                - "{{ trigger.event.data.from }}"
+      
+      - conditions:
+          - condition: template
+            value_template: "{{ 'lights off' in command }}"
+        sequence:
+          - service: light.turn_off
+            target:
+              entity_id: all
+          - service: notify.twilio_sms
+            data:
+              message: "All lights turned off"
+              target:
+                - "{{ trigger.event.data.from }}"
+      
+      # Lock/unlock doors
+      - conditions:
+          - condition: template
+            value_template: "{{ 'lock doors' in command }}"
+        sequence:
+          - service: lock.lock
+            target:
+              entity_id: all
+          - service: notify.twilio_sms
+            data:
+              message: "All doors locked"
+              target:
+                - "{{ trigger.event.data.from }}"
+      
+      # Get status
+      - conditions:
+          - condition: template
+            value_template: "{{ 'status' in command }}"
+        sequence:
+          - service: notify.twilio_sms
+            data:
+              message: >
+                Home Status:
+                Lights: {{ states.light | selectattr('state', 'eq', 'on') | list | count }} on
+                Locks: {{ states.lock | selectattr('state', 'eq', 'unlocked') | list | count }} unlocked
+                Temp: {{ states('sensor.temperature') }}°
+              target:
+                - "{{ trigger.event.data.from }}"
+    
+    default:
+      - service: notify.twilio_sms
+        data:
+          message: "Unknown command. Try: lights on/off, lock doors, status"
+          target:
+            - "{{ trigger.event.data.from }}"
