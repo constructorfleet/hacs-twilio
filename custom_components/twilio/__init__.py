@@ -57,7 +57,7 @@ CONFIG_SCHEMA = vol.Schema(
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Twilio component."""
-    if not hass.config_entries.async_entries(DOMAIN):
+    if not hass.config_entries.async_entries(DOMAIN) and DOMAIN in config:
         conf = config[DOMAIN]
         hass.async_create_task(
             hass.config_entries.flow.async_init(
