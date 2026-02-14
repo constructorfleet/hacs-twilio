@@ -14,6 +14,11 @@ from homeassistant.components import webhook
 from homeassistant.const import CONF_WEBHOOK_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_entry_flow
+from homeassistant.helpers.selector import (
+    TextSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+)
 
 from .const import (
     CONF_ACCOUNT_SID,
@@ -99,8 +104,8 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         data_schema = vol.Schema(
             {
-                vol.Required(CONF_ACCOUNT_SID): str,
-                vol.Required(CONF_AUTH_TOKEN): str,
+                vol.Required(CONF_ACCOUNT_SID): TextSelector(),
+                vol.Required(CONF_AUTH_TOKEN): TextSelector(),
             }
         )
 
@@ -136,7 +141,7 @@ class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
                         default=self.config_entry.options.get(
                             CONF_SENSOR_CLEANUP_HOURS, DEFAULT_SENSOR_CLEANUP_HOURS
                         ),
-                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=168)),
+                    ): NumberSelector(NumberSelectorConfig(min=1, max=168)),
                 }
             ),
         )
@@ -148,14 +153,3 @@ class CannotConnect(Exception):
 
 class InvalidAuth(Exception):
     """Error to indicate there is invalid auth."""
-
-
-# Register the webhook flow handler
-config_entry_flow.register_webhook_flow(
-    DOMAIN,
-    "Twilio Webhook",
-    {
-        "twilio_url": "https://www.twilio.com/docs/glossary/what-is-a-webhook",
-        "docs_url": "https://www.home-assistant.io/integrations/twilio/",
-    },
-)
