@@ -18,6 +18,7 @@ from homeassistant.helpers.typing import ConfigType
 from .const import (
     CONF_ACCOUNT_SID,
     CONF_AUTH_TOKEN,
+    DEFAULT_TRANSCRIBE_LANGUAGE,
     DATA_TWILIO,
     DOMAIN,
     ATTR_CALL_SID,
@@ -105,6 +106,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 vol.Required("to"): cv.string,
                 vol.Required("from_number"): cv.string,
                 vol.Optional("message", default=""): cv.string,
+                vol.Optional("transcription", default=False): cv.boolean,
+                vol.Optional("language_code", default=DEFAULT_TRANSCRIBE_LANGUAGE): cv.string,
+                vol.Optional("profanity_filter", default=False): cv.boolean,
+                vol.Optional("automatic_punctuation", default=False): cv.boolean,
+                vol.Optional("transcription_pause", default=10): vol.All(vol.Coerce(int), vol.Range(min=1, max=3600)),
+                vol.Optional("webhook_method", default="POST"): cv.string,
             }),
             supports_response=SupportsResponse.ONLY,
         )

@@ -4,19 +4,21 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 import urllib.parse
 
 from twilio.base.exceptions import TwilioRestException
-from twilio.twiml.voice_response import VoiceResponse, Gather
+from twilio.twiml.voice_response import Start, VoiceResponse, Gather
 import voluptuous as vol
 
 from homeassistant.components.notify import (
+    PLATFORM_SCHEMA as NOTIFY_PLATFORM_SCHEMA,
+)
+from homeassistant.components.notify.const import (
     ATTR_DATA,
     ATTR_TARGET,
-    PLATFORM_SCHEMA as NOTIFY_PLATFORM_SCHEMA,
-    BaseNotificationService,
 )
+from homeassistant.components.notify.legacy import BaseNotificationService
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
@@ -185,9 +187,7 @@ class TwilioSMSNotificationService(BaseNotificationService):
         if domain == "image":
             return f"{external_base}/api/image_proxy/{entity_id}"
 
-        _LOGGER.warning(
-            "Unsupported entity domain for MMS attachment: %s", entity_id
-        )
+        _LOGGER.warning("Unsupported entity domain for MMS attachment: %s", entity_id)
         return None
 
     def _build_file_media_url(self, image_path: str) -> str | None:
@@ -201,9 +201,7 @@ class TwilioSMSNotificationService(BaseNotificationService):
             _LOGGER.error("Image file not found: %s", image_path)
             return None
         if path.stat().st_size > MAX_MMS_MEDIA_SIZE_BYTES:
-            _LOGGER.warning(
-                "Image file is too large for MMS (max 5MB): %s", image_path
-            )
+            _LOGGER.warning("Image file is too large for MMS (max 5MB): %s", image_path)
             return None
 
         # Only files under <config>/www are exposed via /local.
@@ -263,14 +261,20 @@ class TwilioSMSNotificationService(BaseNotificationService):
             twilio_args[ATTR_MEDIAURL] = media_urls
 
         # Add status callback if configured
-        if ATTR_STATUS_CALLBACK in data and data[ATTR_STATUS_CALLBACK] and self.webhook_url:
+        if (
+            ATTR_STATUS_CALLBACK in data
+            and data[ATTR_STATUS_CALLBACK]
+            and self.webhook_url
+        ):
             twilio_args["status_callback"] = self.webhook_url
             # Set status callback method if specified
             method = data.get(ATTR_STATUS_CALLBACK_METHOD, "POST").upper()
             if method in ["POST", "GET", "PUT"]:
                 twilio_args["status_callback_method"] = method
             else:
-                _LOGGER.warning("Invalid status_callback_method: %s, using POST", method)
+                _LOGGER.warning(
+                    "Invalid status_callback_method: %s, using POST", method
+                )
                 twilio_args["status_callback_method"] = "POST"
 
         if not targets:
@@ -303,7 +307,7 @@ class TwilioCallNotificationService(BaseNotificationService):
         voice=DEFAULT_VOICE,
         language=DEFAULT_LANGUAGE,
         phrase_mappings=None,
-        hass=None,
+        hass: HomeAssistant | None = None,
         webhook_url=None,
     ):
         """Initialize the service."""
@@ -312,8 +316,9 @@ class TwilioCallNotificationService(BaseNotificationService):
         self.voice = voice
         self.language = language
         self.phrase_mappings = phrase_mappings or {}
-        self.hass = hass
         self.webhook_url = webhook_url
+        if hass:
+            self.hass = hass
 
     def send_message(self, message: str = "", **kwargs: Any) -> None:
         """Make voice call to specified target users."""
@@ -360,7 +365,9 @@ class TwilioCallNotificationService(BaseNotificationService):
         except TwilioRestException as exc:
             _LOGGER.error("Failed to initiate call to %s: %s", target, exc)
 
-    async def _make_simple_call(self, target: str, message: str, data: dict[str, Any]) -> None:
+    async def _make_simple_call(
+        self, target: str, message: str, data: dict[str, Any]
+    ) -> None:
         """Make a simple call with a message.
 
         Note: This method uses Twimlets, which is a legacy Twilio service.
@@ -369,11 +376,15 @@ class TwilioCallNotificationService(BaseNotificationService):
         # Determine status callback settings
         status_callback = None
         status_callback_method = "POST"
-        
-        if ATTR_STATUS_CALLBACK in data and data[ATTR_STATUS_CALLBACK] and self.webhook_url:
+
+        if (
+            ATTR_STATUS_CALLBACK in data
+            and data[ATTR_STATUS_CALLBACK]
+            and self.webhook_url
+        ):
             status_callback = self.webhook_url
             status_callback_method = data.get(ATTR_STATUS_CALLBACK_METHOD, "POST")
-        
+
         # Use helper function to make the call
         await make_simple_call(
             client=self.client,
@@ -385,16 +396,22 @@ class TwilioCallNotificationService(BaseNotificationService):
             status_callback_method=status_callback_method,
         )
 
-    async def _make_twiml_call(self, target: str, twiml_url: str, data: dict[str, Any]) -> None:
+    async def _make_twiml_call(
+        self, target: str, twiml_url: str, data: dict[str, Any]
+    ) -> None:
         """Make a call with custom TwiML."""
         # Determine status callback settings
         status_callback = None
         status_callback_method = "POST"
-        
-        if ATTR_STATUS_CALLBACK in data and data[ATTR_STATUS_CALLBACK] and self.webhook_url:
+
+        if (
+            ATTR_STATUS_CALLBACK in data
+            and data[ATTR_STATUS_CALLBACK]
+            and self.webhook_url
+        ):
             status_callback = self.webhook_url
             status_callback_method = data.get(ATTR_STATUS_CALLBACK_METHOD, "POST")
-        
+
         # Use helper function to make the call
         await make_call(
             client=self.client,
@@ -436,7 +453,7 @@ class TwilioCallNotificationService(BaseNotificationService):
         # Use Stream transcription for real-time transcription with enhanced options
         if transcribe_enabled and transcribe_config and self.webhook_url:
             # Start streaming transcription
-            start = response.start()
+            start = cast(Start, response.start())
             transcription_params = {
                 "status_callback_url": self.webhook_url,
                 "status_callback_method": "POST",
@@ -444,18 +461,26 @@ class TwilioCallNotificationService(BaseNotificationService):
 
             # Add enhanced transcription options
             if CONF_TRANSCRIBE_LANGUAGE in transcribe_config:
-                transcription_params["language_code"] = transcribe_config[CONF_TRANSCRIBE_LANGUAGE]
+                transcription_params["language_code"] = transcribe_config[
+                    CONF_TRANSCRIBE_LANGUAGE
+                ]
             else:
                 transcription_params["language_code"] = DEFAULT_TRANSCRIBE_LANGUAGE
 
             if CONF_PROFANITY_FILTER in transcribe_config:
-                transcription_params["profanity_filter"] = transcribe_config[CONF_PROFANITY_FILTER]
+                transcription_params["profanity_filter"] = transcribe_config[
+                    CONF_PROFANITY_FILTER
+                ]
 
             if CONF_PARTIAL_RESULTS in transcribe_config:
-                transcription_params["partial_results"] = transcribe_config[CONF_PARTIAL_RESULTS]
+                transcription_params["partial_results"] = transcribe_config[
+                    CONF_PARTIAL_RESULTS
+                ]
 
             if CONF_AUTOMATIC_PUNCTUATION in transcribe_config:
-                transcription_params["enable_automatic_punctuation"] = transcribe_config[CONF_AUTOMATIC_PUNCTUATION]
+                transcription_params["enable_automatic_punctuation"] = (
+                    transcribe_config[CONF_AUTOMATIC_PUNCTUATION]
+                )
 
             start.transcription(**transcription_params)
 
@@ -478,7 +503,8 @@ class TwilioCallNotificationService(BaseNotificationService):
         if record_enabled:
             # Use basic recording (not streaming)
             record_params = {
-                "transcribe": transcribe_enabled and not transcribe_config,  # Use basic transcription only if no advanced config
+                "transcribe": transcribe_enabled
+                and not transcribe_config,  # Use basic transcription only if no advanced config
             }
 
             # Add transcription callback for basic transcription

@@ -53,6 +53,42 @@ async def test_async_make_call_success(mock_twilio_client):
     
     # Verify Twilio client was called
     mock_twilio_client.calls.create_async.assert_called_once()
+    call_kwargs = mock_twilio_client.calls.create_async.call_args.kwargs
+    assert "url" in call_kwargs
+    assert "twimlets.com/message" in call_kwargs["url"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_make_call_with_transcription(mock_twilio_client):
+    """Test making a call with streaming transcription enabled."""
+    hass = create_mock_hass_with_client(mock_twilio_client)
+
+    call_data = {
+        "to": "+1234567890",
+        "from_number": "+0987654321",
+        "transcription": True,
+        "language_code": "en-US",
+        "profanity_filter": False,
+        "automatic_punctuation": False,
+        "transcription_pause": 10,
+        "webhook_method": "POST",
+    }
+    service_call = ServiceCall(hass, "twilio", "make_call", call_data)
+
+    result = await async_make_call(hass, service_call)
+
+    assert result is not None
+    call_kwargs = mock_twilio_client.calls.create_async.call_args.kwargs
+    assert call_kwargs["to"] == "+1234567890"
+    assert call_kwargs["from_"] == "+0987654321"
+    assert "twiml" in call_kwargs
+    assert "Start" in call_kwargs["twiml"]
+    assert "Transcription" in call_kwargs["twiml"]
+    assert "statusCallbackUrl=\"https://example.com/webhook\"" in call_kwargs["twiml"]
+    assert "languageCode=\"en-US\"" in call_kwargs["twiml"]
+    assert "partialResults=\"true\"" in call_kwargs["twiml"]
+    assert "url" not in call_kwargs
 
 
 @pytest.mark.unit

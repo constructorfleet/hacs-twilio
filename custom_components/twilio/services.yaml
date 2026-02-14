@@ -66,6 +66,53 @@ make_call:
       example: "Hello from Home Assistant"
       selector:
         text:
+    transcription:
+      name: Enable Transcription
+      description: Enable real-time call transcription via Twilio Start/Transcription
+      required: false
+      default: false
+      selector:
+        boolean:
+    language_code:
+      name: Transcription Language
+      description: BCP-47 language code for transcription
+      required: false
+      default: "en-US"
+      example: "en-US"
+      selector:
+        text:
+    profanity_filter:
+      name: Profanity Filter
+      description: Filter profanity in transcription results
+      required: false
+      default: false
+      selector:
+        boolean:
+    automatic_punctuation:
+      name: Automatic Punctuation
+      description: Enable automatic punctuation in transcription results
+      required: false
+      default: false
+      selector:
+        boolean:
+    transcription_pause:
+      name: Transcription Pause
+      description: Duration in seconds to keep the call active for transcription
+      required: false
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 3600
+          unit_of_measurement: "seconds"
+    webhook_method:
+      name: Webhook Method
+      description: HTTP method for transcription status callback (POST/GET/PUT)
+      required: false
+      default: "POST"
+      example: "POST"
+      selector:
+        text:
 
 # Send DTMF Service
 send_dtmf:

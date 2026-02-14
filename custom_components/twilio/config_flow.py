@@ -16,7 +16,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_entry_flow
 
-from .const import CONF_ACCOUNT_SID, CONF_AUTH_TOKEN, CONF_SENSOR_CLEANUP_HOURS, DEFAULT_SENSOR_CLEANUP_HOURS, DOMAIN
+from .const import (
+    CONF_ACCOUNT_SID,
+    CONF_AUTH_TOKEN,
+    CONF_SENSOR_CLEANUP_HOURS,
+    DEFAULT_SENSOR_CLEANUP_HOURS,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +36,9 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     try:
         client = Client(data[CONF_ACCOUNT_SID], data[CONF_AUTH_TOKEN])
         # Try to fetch account info to validate credentials
-        await hass.async_add_executor_job(lambda: client.api.accounts(data[CONF_ACCOUNT_SID]).fetch())
+        await hass.async_add_executor_job(
+            lambda: client.api.accounts(data[CONF_ACCOUNT_SID]).fetch()
+        )
     except TwilioRestException as err:
         _LOGGER.error("Failed to authenticate with Twilio: %s", err)
         raise InvalidAuth from err
@@ -51,11 +59,11 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> TwilioOptionsFlowHandler:
         """Get the options flow for this handler."""
-        return TwilioOptionsFlowHandler(config_entry)
+        return TwilioOptionsFlowHandler()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> config_entries.ConfigFlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
@@ -101,13 +109,9 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle Twilio options."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
-
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> config_entries.ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
@@ -136,4 +140,11 @@ class InvalidAuth(Exception):
 
 
 # Register the webhook flow handler
-config_entry_flow.register_webhook_flow(DOMAIN)
+config_entry_flow.register_webhook_flow(
+    DOMAIN,
+    "Twilio Webhook",
+    {
+        "twilio_url": "https://www.twilio.com/docs/glossary/what-is-a-webhook",
+        "docs_url": "https://www.home-assistant.io/integrations/twilio/",
+    },
+)
