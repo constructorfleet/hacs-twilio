@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 import logging
 from typing import Any
 
@@ -22,8 +22,6 @@ from .const import (
     EVENT_TWILIO_TRANSCRIPTION,
     ATTR_CALL_SID,
     ATTR_CALL_STATUS,
-    ATTR_FROM,
-    ATTR_TO,
     ATTR_TRANSCRIPTION,
     ATTR_CURRENT_TRANSCRIPTION,
     ATTR_FULL_TRANSCRIPTION,

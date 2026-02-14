@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 from typing import Any
@@ -35,8 +34,6 @@ from .const import (
     CONF_TIMEOUT,
     CONF_NUM_DIGITS,
     CONF_FINISH_ON_KEY,
-    CONF_RECEIVE_STATUS_METHOD,
-    CONF_TRANSCRIBE,
     CONF_TRANSCRIBE_LANGUAGE,
     CONF_PROFANITY_FILTER,
     CONF_PARTIAL_RESULTS,
@@ -44,11 +41,6 @@ from .const import (
     DATA_TWILIO,
     DOMAIN,
     ATTR_MEDIAURL,
-    ATTR_CALL_SID,
-    ATTR_CALL_STATUS,
-    ATTR_FROM,
-    ATTR_TO,
-    EVENT_TWILIO_CALL_INITIATED,
     DEFAULT_TIMEOUT,
     DEFAULT_NUM_DIGITS,
     DEFAULT_FINISH_ON_KEY,
@@ -56,6 +48,7 @@ from .const import (
     DEFAULT_LANGUAGE,
     DEFAULT_TRANSCRIBE_LANGUAGE,
 )
+from .helper import make_call, make_simple_call
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -174,7 +167,6 @@ class TwilioSMSNotificationService(BaseNotificationService):
 
         # Support camera entity
         if ATTR_CAMERA_ENTITY in data:
-            camera_entity = data[ATTR_CAMERA_ENTITY]
             # TODO: Implement camera image upload to external hosting service
             # For now, log a warning that camera entity requires external hosting
             _LOGGER.warning(
@@ -263,105 +255,87 @@ class TwilioCallNotificationService(BaseNotificationService):
         data = kwargs.get(ATTR_DATA) or {}
         call_type = data.get(ATTR_CALL_TYPE, CALL_TYPE_SIMPLE)
 
-        for target in targets:
-            try:
-                if call_type == CALL_TYPE_TWIML:
-                    # Use custom TwiML URL
-                    twiml_url = data.get(ATTR_TWIML_URL)
-                    if not twiml_url:
-                        _LOGGER.error("TwiML URL required for twiml call type")
-                        continue
-                    self._make_twiml_call(target, twiml_url, data)
+        # Schedule async calls for each target
+        if self.hass:
+            for target in targets:
+                self.hass.async_create_task(
+                    self._async_make_call(target, message, call_type, data)
+                )
+        else:
+            _LOGGER.error("Cannot make calls: HomeAssistant instance not available")
 
-                elif call_type == CALL_TYPE_INTERACTIVE:
-                    # Generate interactive TwiML with gather, record, transcribe
-                    twiml_url = self._generate_interactive_twiml_url(message, data)
-                    self._make_twiml_call(target, twiml_url, data)
+    async def _async_make_call(
+        self, target: str, message: str, call_type: str, data: dict[str, Any]
+    ) -> None:
+        """Make a call asynchronously."""
+        try:
+            if call_type == CALL_TYPE_TWIML:
+                # Use custom TwiML URL
+                twiml_url = data.get(ATTR_TWIML_URL)
+                if not twiml_url:
+                    _LOGGER.error("TwiML URL required for twiml call type")
+                    return
+                await self._make_twiml_call(target, twiml_url, data)
 
-                else:
-                    # Simple message call using Twimlet
-                    self._make_simple_call(target, message, data)
+            elif call_type == CALL_TYPE_INTERACTIVE:
+                # Generate interactive TwiML with gather, record, transcribe
+                twiml_url = self._generate_interactive_twiml_url(message, data)
+                await self._make_twiml_call(target, twiml_url, data)
 
-                _LOGGER.debug("Call initiated to %s", target)
+            else:
+                # Simple message call using Twimlet
+                await self._make_simple_call(target, message, data)
 
-            except TwilioRestException as exc:
-                _LOGGER.error("Failed to initiate call to %s: %s", target, exc)
+            _LOGGER.debug("Call initiated to %s", target)
 
-    def _make_simple_call(self, target: str, message: str, data: dict[str, Any]) -> None:
+        except TwilioRestException as exc:
+            _LOGGER.error("Failed to initiate call to %s: %s", target, exc)
+
+    async def _make_simple_call(self, target: str, message: str, data: dict[str, Any]) -> None:
         """Make a simple call with a message.
 
         Note: This method uses Twimlets, which is a legacy Twilio service.
         For production use, consider hosting your own TwiML endpoints.
         """
-        if message.startswith(("http://", "https://")):
-            twimlet_url = message
-        else:
-            twimlet_url = "https://twimlets.com/message?Message="
-            twimlet_url += urllib.parse.quote(message, safe="")
-
-        call_args = {
-            "to": target,
-            "from_": self.from_number,
-            "url": twimlet_url,
-        }
-
-        # Add status callback if configured
+        # Determine status callback settings
+        status_callback = None
+        status_callback_method = "POST"
+        
         if ATTR_STATUS_CALLBACK in data and data[ATTR_STATUS_CALLBACK] and self.webhook_url:
-            call_args["status_callback"] = self.webhook_url
-            method = data.get(ATTR_STATUS_CALLBACK_METHOD, "POST").upper()
-            if method in ["POST", "GET", "PUT"]:
-                call_args["status_callback_method"] = method
-            else:
-                _LOGGER.warning("Invalid status_callback_method: %s, using POST", method)
-                call_args["status_callback_method"] = "POST"
+            status_callback = self.webhook_url
+            status_callback_method = data.get(ATTR_STATUS_CALLBACK_METHOD, "POST")
+        
+        # Use helper function to make the call
+        await make_simple_call(
+            client=self.client,
+            to_number=target,
+            from_number=self.from_number,
+            message=message,
+            hass=self.hass,
+            status_callback=status_callback,
+            status_callback_method=status_callback_method,
+        )
 
-        call = self.client.calls.create(**call_args)
-
-        # Fire event for call initiated
-        if self.hass:
-            self.hass.bus.fire(
-                EVENT_TWILIO_CALL_INITIATED,
-                {
-                    ATTR_CALL_SID: call.sid,
-                    ATTR_TO: target,
-                    ATTR_FROM: self.from_number,
-                    ATTR_CALL_STATUS: call.status,
-                    "direction": "outbound-api",
-                },
-            )
-
-    def _make_twiml_call(self, target: str, twiml_url: str, data: dict[str, Any]) -> None:
+    async def _make_twiml_call(self, target: str, twiml_url: str, data: dict[str, Any]) -> None:
         """Make a call with custom TwiML."""
-        call_args = {
-            "to": target,
-            "from_": self.from_number,
-            "url": twiml_url,
-        }
-
-        # Add status callback if configured
+        # Determine status callback settings
+        status_callback = None
+        status_callback_method = "POST"
+        
         if ATTR_STATUS_CALLBACK in data and data[ATTR_STATUS_CALLBACK] and self.webhook_url:
-            call_args["status_callback"] = self.webhook_url
-            method = data.get(ATTR_STATUS_CALLBACK_METHOD, "POST").upper()
-            if method in ["POST", "GET", "PUT"]:
-                call_args["status_callback_method"] = method
-            else:
-                _LOGGER.warning("Invalid status_callback_method: %s, using POST", method)
-                call_args["status_callback_method"] = "POST"
-
-        call = self.client.calls.create(**call_args)
-
-        # Fire event for call initiated
-        if self.hass:
-            self.hass.bus.fire(
-                EVENT_TWILIO_CALL_INITIATED,
-                {
-                    ATTR_CALL_SID: call.sid,
-                    ATTR_TO: target,
-                    ATTR_FROM: self.from_number,
-                    ATTR_CALL_STATUS: call.status,
-                    "direction": "outbound-api",
-                },
-            )
+            status_callback = self.webhook_url
+            status_callback_method = data.get(ATTR_STATUS_CALLBACK_METHOD, "POST")
+        
+        # Use helper function to make the call
+        await make_call(
+            client=self.client,
+            to_number=target,
+            from_number=self.from_number,
+            twiml_url=twiml_url,
+            hass=self.hass,
+            status_callback=status_callback,
+            status_callback_method=status_callback_method,
+        )
 
     def _generate_interactive_twiml_url(
         self, message: str, data: dict[str, Any]
