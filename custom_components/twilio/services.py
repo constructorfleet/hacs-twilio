@@ -12,8 +12,6 @@ from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 from .const import (
     ATTR_CALL_SID,
     ATTR_DTMF_DIGITS,
-    ATTR_FROM,
-    ATTR_TO,
 )
 from .helper import (
     fire_call_initiated_event,

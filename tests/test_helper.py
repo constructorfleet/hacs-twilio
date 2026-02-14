@@ -1,6 +1,6 @@
 """Tests for helper.py functions."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 from custom_components.twilio.helper import (
     fire_call_initiated_event,
