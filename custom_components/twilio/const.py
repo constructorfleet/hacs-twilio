@@ -17,6 +17,7 @@ EVENT_TWILIO_CALL_RECEIVED = f"{DOMAIN}_call_received"
 EVENT_TWILIO_CALL_INITIATED = f"{DOMAIN}_call_initiated"
 EVENT_TWILIO_CALL_ENDED = f"{DOMAIN}_call_ended"
 EVENT_TWILIO_TRANSCRIPTION = f"{DOMAIN}_transcription_received"
+EVENT_TWILIO_TRANSCRIPTION_UPDATED = "transcription_updated"
 EVENT_TWILIO_DTMF = f"{DOMAIN}_dtmf_received"
 
 # Attributes

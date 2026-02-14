@@ -26,11 +26,11 @@ _LOGGER = logging.getLogger(__name__)
 
 def get_twilio_client(hass: HomeAssistant) -> Client | None:
     """Get Twilio client from hass.data."""
-    
+
     # Check if DOMAIN/DATA_TWILIO key exists
     if DATA_TWILIO in hass.data:
         data = hass.data[DATA_TWILIO]
-        
+
         # If it's a dict, it's config entry structure - iterate through entries
         if isinstance(data, dict):
             for entry_data in data.values():
@@ -39,14 +39,14 @@ def get_twilio_client(hass: HomeAssistant) -> Client | None:
         else:
             # It's the client itself (legacy YAML config)
             return data
-    
+
     _LOGGER.error("Twilio client not found in hass.data")
     return None
 
 
 def get_webhook_url(hass: HomeAssistant) -> str | None:
     """Get webhook URL from hass.data."""
-    
+
     if DOMAIN in hass.data:
         data = hass.data[DOMAIN]
         # Only look for webhook_url in config entry structure (dict)
@@ -54,19 +54,19 @@ def get_webhook_url(hass: HomeAssistant) -> str | None:
             for entry_data in data.values():
                 if isinstance(entry_data, dict) and "webhook_url" in entry_data:
                     return entry_data["webhook_url"]
-    
+
     return None
 
 
 def generate_simple_twiml_url(message: str) -> str:
     """Generate a simple TwiML URL for text-to-speech.
-    
+
     Note: This method uses Twimlets, which is a legacy Twilio service.
     For production use, consider hosting your own TwiML endpoints.
     """
     if message.startswith(("http://", "https://")):
         return message
-    
+
     twimlet_url = "https://twimlets.com/message?Message="
     twimlet_url += urllib.parse.quote(message, safe="")
     return twimlet_url
@@ -103,7 +103,7 @@ async def make_call(
     status_callback_method: str = "POST",
 ) -> dict[str, Any] | None:
     """Make a Twilio call with the given parameters.
-    
+
     Args:
         client: Twilio client instance (with AsyncTwilioHttpClient)
         to_number: Destination phone number
@@ -112,7 +112,7 @@ async def make_call(
         hass: Home Assistant instance (for firing events)
         status_callback: Optional webhook URL for status callbacks
         status_callback_method: HTTP method for status callback (POST, GET, PUT)
-    
+
     Returns:
         Dictionary with call information (call_sid, status) or None on error
     """
@@ -121,7 +121,7 @@ async def make_call(
         "from_": from_number,
         "url": twiml_url,
     }
-    
+
     # Add status callback if provided
     if status_callback:
         call_args["status_callback"] = status_callback
@@ -131,26 +131,26 @@ async def make_call(
         else:
             _LOGGER.warning("Invalid status_callback_method: %s, using POST", method)
             call_args["status_callback_method"] = "POST"
-    
+
     try:
         # Twilio client with AsyncTwilioHttpClient returns awaitable
         call = await client.calls.create_async(**call_args)
-        
+
         # Fire event if hass is available
-        if hass:
+        if hass and call.sid and call.status:
             fire_call_initiated_event(
-                hass, call.sid, to_number, from_number, call.status
+                hass, call.sid, to_number, from_number, str(call.status)
             )
-        
+
         _LOGGER.info("Call initiated to %s with SID %s", to_number, call.sid)
-        
+
         return {
             "call_sid": call.sid,
-            "status": call.status,
+            "status": str(call.status),
             "to": to_number,
             "from": from_number,
         }
-    
+
     except TwilioRestException as exc:
         _LOGGER.error("Failed to initiate call to %s: %s", to_number, exc)
         return None
@@ -166,9 +166,9 @@ async def make_simple_call(
     status_callback_method: str = "POST",
 ) -> dict[str, Any] | None:
     """Make a simple text-to-speech call.
-    
+
     This is a convenience function that generates a TwiML URL and makes the call.
-    
+
     Args:
         client: Twilio client instance (with AsyncTwilioHttpClient)
         to_number: Destination phone number
@@ -177,12 +177,12 @@ async def make_simple_call(
         hass: Home Assistant instance (for firing events)
         status_callback: Optional webhook URL for status callbacks
         status_callback_method: HTTP method for status callback (POST, GET, PUT)
-    
+
     Returns:
         Dictionary with call information (call_sid, status) or None on error
     """
     twiml_url = generate_simple_twiml_url(message)
-    
+
     return await make_call(
         client=client,
         to_number=to_number,

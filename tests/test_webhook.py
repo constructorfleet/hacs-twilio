@@ -16,12 +16,14 @@ from custom_components.twilio.const import (
     EVENT_TWILIO_DTMF,
     EVENT_TWILIO_SMS_RECEIVED,
     EVENT_TWILIO_TRANSCRIPTION,
+    EVENT_TWILIO_TRANSCRIPTION_UPDATED,
 )
 
 
 def create_mock_hass():
     """Create a properly mocked HomeAssistant instance."""
     mock_hass = MagicMock()
+    mock_hass.data = {}
     mock_hass.bus = MagicMock()
     mock_hass.bus.async_fire = MagicMock()
     return mock_hass
@@ -234,6 +236,109 @@ async def test_handle_webhook_transcription():
             assert event_data["transcription_sid"] == "TR123"
     
     assert transcription_event_fired
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_handle_webhook_transcription_event_updates():
+    """Test handling TranscriptionEvent webhook and cumulative updates."""
+    hass = create_mock_hass()
+    webhook_id = "test_webhook"
+
+    request1 = MagicMock()
+    request1.post = AsyncMock(return_value={
+        "CallSid": "CA123",
+        "TranscriptionSid": "GT123",
+        "TranscriptionEvent": "transcription-content",
+        "SequenceId": "1",
+        "Track": "outbound_track",
+        "Timestamp": "2024-06-25T16:30:21.600697Z",
+        "LanguageCode": "en-US",
+        "Stability": "0.9",
+        "Final": "false",
+        "TranscriptionData": "{\"transcript\":\"Hello there\"}",
+    })
+    response1 = await handle_webhook(hass, webhook_id, request1)
+    assert response1.status == 200
+
+    request2 = MagicMock()
+    request2.post = AsyncMock(return_value={
+        "CallSid": "CA123",
+        "TranscriptionSid": "GT123",
+        "TranscriptionEvent": "transcription-content",
+        "SequenceId": "2",
+        "Track": "outbound_track",
+        "Timestamp": "2024-06-25T16:30:22.600697Z",
+        "LanguageCode": "en-US",
+        "Stability": "0.9",
+        "Final": "true",
+        "TranscriptionData": "{\"transcript\":\"there from Twilio\"}",
+    })
+    response2 = await handle_webhook(hass, webhook_id, request2)
+    assert response2.status == 200
+
+    updated_events = [
+        call for call in hass.bus.async_fire.call_args_list
+        if call[0][0] == EVENT_TWILIO_TRANSCRIPTION_UPDATED
+    ]
+    assert len(updated_events) == 2
+
+    first_event = updated_events[0][0][1]
+    assert first_event[ATTR_CALL_SID] == "CA123"
+    assert first_event[ATTR_TRANSCRIPTION] == "Hello there"
+    assert first_event["segment_text"] == "Hello there"
+    assert first_event["parts_count"] == 1
+
+    second_event = updated_events[1][0][1]
+    assert second_event[ATTR_CALL_SID] == "CA123"
+    assert second_event[ATTR_TRANSCRIPTION] == "Hello there from Twilio"
+    assert second_event["segment_text"] == "there from Twilio"
+    assert second_event["sequence_id"] == "2"
+    assert second_event["final"] is True
+    assert second_event["parts_count"] == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_handle_webhook_transcription_event_sequence_update():
+    """Test updated content for an existing sequence replaces prior segment."""
+    hass = create_mock_hass()
+    webhook_id = "test_webhook"
+
+    request1 = MagicMock()
+    request1.post = AsyncMock(return_value={
+        "CallSid": "CA999",
+        "TranscriptionSid": "GT999",
+        "TranscriptionEvent": "transcription-content",
+        "SequenceId": "10",
+        "Track": "inbound_track",
+        "Timestamp": "2024-06-25T16:30:30.600697Z",
+        "TranscriptionData": "{\"transcript\":\"hello wor\"}",
+    })
+    await handle_webhook(hass, webhook_id, request1)
+
+    request2 = MagicMock()
+    request2.post = AsyncMock(return_value={
+        "CallSid": "CA999",
+        "TranscriptionSid": "GT999",
+        "TranscriptionEvent": "transcription-content",
+        "SequenceId": "10",
+        "Track": "inbound_track",
+        "Timestamp": "2024-06-25T16:30:31.600697Z",
+        "TranscriptionData": "{\"transcript\":\"hello world\"}",
+    })
+    await handle_webhook(hass, webhook_id, request2)
+
+    updated_events = [
+        call for call in hass.bus.async_fire.call_args_list
+        if call[0][0] == EVENT_TWILIO_TRANSCRIPTION_UPDATED
+    ]
+    assert len(updated_events) == 2
+
+    latest = updated_events[-1][0][1]
+    assert latest[ATTR_CALL_SID] == "CA999"
+    assert latest[ATTR_TRANSCRIPTION] == "hello world"
+    assert latest["parts_count"] == 1
 
 
 @pytest.mark.unit

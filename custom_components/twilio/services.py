@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from typing import cast
 import urllib.parse
 
-from twilio.twiml.voice_response import VoiceResponse
+from twilio.twiml.voice_response import Start, VoiceResponse
 
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 
@@ -28,6 +29,7 @@ async def async_make_call(hass: HomeAssistant, call: ServiceCall) -> ServiceResp
     to_number = call.data.get("to")
     message = call.data.get("message", "")
     from_number = call.data.get("from_number")
+    transcription_enabled = call.data.get("transcription", False)
 
     if not to_number:
         _LOGGER.error("'to' number is required for make_call service")
@@ -41,28 +43,73 @@ async def async_make_call(hass: HomeAssistant, call: ServiceCall) -> ServiceResp
 
     # Use provided from_number
     if not from_number:
-        _LOGGER.warning("No from_number provided, call may fail without configured number")
+        _LOGGER.warning(
+            "No from_number provided, call may fail without configured number"
+        )
         return None
 
     try:
-        # Create simple TwiML for the message
-        twiml_url = generate_simple_twiml_url(message)
+        if transcription_enabled:
+            webhook_url = get_webhook_url(hass)
+            if not webhook_url:
+                _LOGGER.error(
+                    "Transcription requested for make_call but no webhook URL is configured"
+                )
+                return None
 
-        # Make the call using async Twilio client
-        twilio_call = await client.calls.create_async(
-            to=to_number,
-            from_=from_number,
-            url=twiml_url,
-        )
+            webhook_method = call.data.get("webhook_method", "POST").upper()
+            if webhook_method not in ["POST", "GET", "PUT"]:
+                _LOGGER.warning(
+                    "Invalid webhook_method '%s'; defaulting to POST", webhook_method
+                )
+                webhook_method = "POST"
+
+            language_code = call.data.get("language_code", "en-US")
+            profanity_filter = call.data.get("profanity_filter", False)
+            automatic_punctuation = call.data.get("automatic_punctuation", False)
+            transcription_pause = call.data.get("transcription_pause", 10)
+
+            twiml = VoiceResponse()
+            cast(Start, twiml.start()).transcription(
+                status_callback_url=webhook_url,
+                status_callback_method=webhook_method,
+                language_code=language_code,
+                profanity_filter=profanity_filter,
+                enable_automatic_punctuation=automatic_punctuation,
+                partial_results=True,
+            )
+            twiml.pause(length=transcription_pause)
+
+            twilio_call = await client.calls.create_async(
+                to=to_number,
+                from_=from_number,
+                twiml=twiml.to_xml(),
+            )
+        else:
+            # Create simple TwiML for the message
+            twiml_url = generate_simple_twiml_url(message)
+
+            # Make the call using async Twilio client
+            twilio_call = await client.calls.create_async(
+                to=to_number,
+                from_=from_number,
+                url=twiml_url,
+            )
 
         call_sid = twilio_call.sid
         call_status = twilio_call.status
 
+        if not call_sid or not call_status:
+            return {}
+
         # Fire event for call initiated
-        fire_call_initiated_event(hass, call_sid, to_number, from_number, call_status)
+        fire_call_initiated_event(
+            hass, call_sid, to_number, from_number, str(call_status)
+        )
 
         # Wait a moment for sensor to be created
         import asyncio
+
         await asyncio.sleep(0.5)
 
         # Get the entity_id of the sensor
@@ -73,7 +120,7 @@ async def async_make_call(hass: HomeAssistant, call: ServiceCall) -> ServiceResp
         return {
             "call_sid": call_sid,
             "entity_id": entity_id,
-            "status": call_status,
+            "status": str(call_status),
             "to": to_number,
             "from": from_number,
         }
@@ -103,7 +150,7 @@ async def async_send_dtmf(hass: HomeAssistant, call: ServiceCall) -> None:
         # Add 'w' between digits for half-second pauses
         twiml = VoiceResponse()
         # Format digits: 'w' creates a 0.5s pause before each digit
-        formatted_digits = 'w' + 'w'.join(digits)
+        formatted_digits = "w" + "w".join(digits)
         twiml.play(digits=formatted_digits)
 
         # Convert TwiML to URL-encoded string
@@ -150,7 +197,11 @@ async def async_start_recording(hass: HomeAssistant, call: ServiceCall) -> None:
         if recording_status_callback and webhook_url:
             record_params["recording_status_callback"] = webhook_url
             record_params["recording_status_callback_method"] = "POST"
-            record_params["recording_status_callback_event"] = ["in-progress", "completed", "absent"]
+            record_params["recording_status_callback_event"] = [
+                "in-progress",
+                "completed",
+                "absent",
+            ]
 
         # Add transcription if requested
         if transcribe:

@@ -20,6 +20,7 @@ from .const import (
     EVENT_TWILIO_CALL_INITIATED,
     EVENT_TWILIO_CALL_ENDED,
     EVENT_TWILIO_TRANSCRIPTION,
+    EVENT_TWILIO_TRANSCRIPTION_UPDATED,
     ATTR_CALL_SID,
     ATTR_CALL_STATUS,
     ATTR_FROM,
@@ -63,7 +64,9 @@ async def async_setup_entry(
 
             # Remove the entity from the registry
             entity_reg = er.async_get(hass)
-            if entity_id := entity_reg.async_get_entity_id("sensor", DOMAIN, sensor.unique_id):
+            if entity_id := entity_reg.async_get_entity_id(
+                "sensor", DOMAIN, sensor.unique_id
+            ):
                 entity_reg.async_remove(entity_id)
                 _LOGGER.debug("Cleaned up sensor for call %s", call_sid)
 
@@ -81,7 +84,13 @@ async def async_setup_entry(
             state = hass.states.get(entity.entity_id)
             if state:
                 # Check if it's a completed call
-                if state.state in ["completed", "busy", "no-answer", "failed", "canceled"]:
+                if state.state in [
+                    "completed",
+                    "busy",
+                    "no-answer",
+                    "failed",
+                    "canceled",
+                ]:
                     # Try to get end_time from attributes, otherwise use last_changed
                     end_time_str = state.attributes.get("end_time")
                     if end_time_str:
@@ -104,27 +113,34 @@ async def async_setup_entry(
                         # Schedule cleanup for the remaining time
                         if end_time:
                             time_since_end = dt_util.now() - end_time
-                            remaining_time = timedelta(hours=cleanup_hours) - time_since_end
+                            remaining_time = (
+                                timedelta(hours=cleanup_hours) - time_since_end
+                            )
 
                             if remaining_time.total_seconds() > 0:
                                 # Extract call_sid from unique_id
                                 call_sid = entity.unique_id.replace("twilio_call_", "")
-                                cleanup_timers = hass.data[DOMAIN]["sensor_manager"]["cleanup_timers"]
+                                cleanup_timers = hass.data[DOMAIN]["sensor_manager"][
+                                    "cleanup_timers"
+                                ]
 
                                 # Capture call_sid in closure correctly
                                 def make_cleanup_callback(sid):
-                                    return lambda _: hass.async_create_task(async_cleanup_sensor(sid))
+                                    async def cleanup_callback(_):
+                                        await async_cleanup_sensor(sid)
+
+                                    return cleanup_callback
 
                                 cleanup_timers[call_sid] = async_call_later(
-                                    hass, remaining_time.total_seconds(),
-                                    make_cleanup_callback(call_sid)
+                                    hass,
+                                    remaining_time.total_seconds(),
+                                    make_cleanup_callback(call_sid),
                                 )
                                 _LOGGER.debug(
                                     "Scheduled cleanup for existing call %s in %s",
-                                    call_sid, remaining_time
+                                    call_sid,
+                                    remaining_time,
                                 )
-
-
 
     @callback
     def handle_call_event(event):
@@ -167,15 +183,16 @@ async def async_setup_entry(
 
                 # Capture call_sid in closure correctly
                 def make_cleanup_callback(sid):
-                    return lambda _: hass.async_create_task(async_cleanup_sensor(sid))
+                    async def cleanup_callback(_):
+                        await async_cleanup_sensor(sid)
+
+                    return cleanup_callback
 
                 cleanup_timers[call_sid] = async_call_later(
-                    hass, cleanup_delay.total_seconds(),
-                    make_cleanup_callback(call_sid)
+                    hass, cleanup_delay.total_seconds(), make_cleanup_callback(call_sid)
                 )
                 _LOGGER.debug(
-                    "Scheduled cleanup for call %s in %s hours",
-                    call_sid, cleanup_hours
+                    "Scheduled cleanup for call %s in %s hours", call_sid, cleanup_hours
                 )
 
     @callback
@@ -190,11 +207,29 @@ async def async_setup_entry(
             sensor = entities_dict[call_sid]
             sensor.add_transcription(event.data.get(ATTR_TRANSCRIPTION, ""))
 
+    @callback
+    def handle_transcription_updated(event):
+        """Handle cumulative transcription event."""
+        call_sid = event.data.get(ATTR_CALL_SID)
+        if not call_sid:
+            return
+
+        entities_dict = hass.data[DOMAIN]["sensor_manager"]["entities"]
+        if call_sid in entities_dict:
+            sensor = entities_dict[call_sid]
+            sensor.set_full_transcription(
+                event.data.get(ATTR_TRANSCRIPTION, ""),
+                event.data.get("segment_text", ""),
+            )
+
     # Register event listeners
     hass.bus.async_listen(EVENT_TWILIO_CALL_RECEIVED, handle_call_event)
     hass.bus.async_listen(EVENT_TWILIO_CALL_INITIATED, handle_call_event)
     hass.bus.async_listen(EVENT_TWILIO_CALL_ENDED, handle_call_ended)
     hass.bus.async_listen(EVENT_TWILIO_TRANSCRIPTION, handle_transcription)
+    hass.bus.async_listen(
+        EVENT_TWILIO_TRANSCRIPTION_UPDATED, handle_transcription_updated
+    )
 
 
 class TwilioCallSensor(SensorEntity):
@@ -209,48 +244,11 @@ class TwilioCallSensor(SensorEntity):
         self._direction = call_data.get("direction", "")
         self._current_transcription = ""
         self._full_transcription = []
+        self._attr_should_poll = False
         self._ended = False
         self._end_time = None
-
-    @property
-    def unique_id(self) -> str:
-        """Return a unique ID."""
-        return f"twilio_call_{self._call_sid}"
-
-    @property
-    def name(self) -> str:
-        """Return the name of the sensor."""
-        return f"Twilio Call {self._call_sid[:8]}"
-
-    @property
-    def native_value(self) -> str:
-        """Return the state of the sensor."""
-        return self._call_status
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend."""
-        if self._call_status in ["in-progress", "ringing", "queued"]:
-            return "mdi:phone-in-talk"
-        elif self._call_status in ["completed", "busy", "no-answer", "failed", "canceled"]:
-            return "mdi:phone-hangup"
-        return "mdi:phone"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the state attributes."""
-        attrs = {
-            ATTR_CALL_SID: self._call_sid,
-            ATTR_PHONE_NUMBER: self._to if self._direction == "outbound-api" else self._from,
-            ATTR_FROM: self._from,
-            ATTR_TO: self._to,
-            "direction": self._direction,
-            ATTR_CURRENT_TRANSCRIPTION: self._current_transcription,
-            ATTR_FULL_TRANSCRIPTION: "\n".join(self._full_transcription),
-        }
-        if self._end_time:
-            attrs["end_time"] = self._end_time.isoformat()
-        return attrs
+        self._attr_unique_id = f"twilio_call_{self._call_sid}"
+        self._attr_name = f"Twilio Call {self._call_sid[:8]}"
 
     @callback
     def update_from_event(self, event_data: dict[str, Any]) -> None:
@@ -262,6 +260,34 @@ class TwilioCallSensor(SensorEntity):
             self._to = event_data[ATTR_TO]
         if "direction" in event_data:
             self._direction = event_data["direction"]
+        if self._call_status in ["in-progress", "ringing", "queued"]:
+            self._attr_icon = "mdi:phone-in-talk"
+        elif self._call_status in [
+            "completed",
+            "busy",
+            "no-answer",
+            "failed",
+            "canceled",
+        ]:
+            self._attr_icon = "mdi:phone-hangup"
+        else:
+            self._attr_icon = "mdi:phone"
+        self._attr_state = self._call_status
+
+        self._attr_extra_state_attributes = {
+            ATTR_CALL_SID: self._call_sid,
+            ATTR_PHONE_NUMBER: (
+                self._to if self._direction == "outbound-api" else self._from
+            ),
+            ATTR_FROM: self._from,
+            ATTR_TO: self._to,
+            "direction": self._direction,
+            ATTR_CURRENT_TRANSCRIPTION: self._current_transcription,
+            ATTR_FULL_TRANSCRIPTION: "\n".join(self._full_transcription),
+        }
+        if self._end_time:
+            self._attr_extra_state_attributes["end_time"] = self._end_time.isoformat()
+
         self.async_write_ha_state()
 
     @callback
@@ -273,13 +299,18 @@ class TwilioCallSensor(SensorEntity):
             self.async_write_ha_state()
 
     @callback
+    def set_full_transcription(
+        self, full_transcription: str, segment_text: str = ""
+    ) -> None:
+        """Set full transcription from cumulative events."""
+        if full_transcription:
+            self._current_transcription = segment_text or full_transcription
+            self._full_transcription = [full_transcription]
+            self.async_write_ha_state()
+
+    @callback
     def mark_ended(self) -> None:
         """Mark the call as ended."""
         self._ended = True
         self._end_time = dt_util.now()
         self.async_write_ha_state()
-
-    @property
-    def should_poll(self) -> bool:
-        """No polling needed."""
-        return False
