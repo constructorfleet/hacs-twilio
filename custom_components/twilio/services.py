@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from typing import cast
 import urllib.parse
@@ -11,8 +13,12 @@ from twilio.twiml.voice_response import Start, VoiceResponse
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 
 from .const import (
+    ATTR_BODY,
     ATTR_CALL_SID,
     ATTR_DTMF_DIGITS,
+    ATTR_FROM,
+    ATTR_MEDIA_URL,
+    ATTR_TO,
 )
 from .helper import (
     fire_call_initiated_event,
@@ -22,6 +28,22 @@ from .helper import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def _async_create_call(client, **kwargs):
+    """Create a call with async client when available, else use sync API in a thread."""
+    create_async = getattr(client.calls, "create_async", None)
+    if create_async and inspect.iscoroutinefunction(create_async):
+        return await create_async(**kwargs)
+    return await asyncio.to_thread(lambda: client.calls.create(**kwargs))
+
+
+async def _async_create_message(client, **kwargs):
+    """Create a message with async client when available, else use sync API in a thread."""
+    create_async = getattr(client.messages, "create_async", None)
+    if create_async and inspect.iscoroutinefunction(create_async):
+        return await create_async(**kwargs)
+    return await asyncio.to_thread(lambda: client.messages.create(**kwargs))
 
 
 async def async_make_call(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
@@ -80,7 +102,8 @@ async def async_make_call(hass: HomeAssistant, call: ServiceCall) -> ServiceResp
             )
             twiml.pause(length=transcription_pause)
 
-            twilio_call = await client.calls.create_async(
+            twilio_call = await _async_create_call(
+                client,
                 to=to_number,
                 from_=from_number,
                 twiml=twiml.to_xml(),
@@ -90,7 +113,8 @@ async def async_make_call(hass: HomeAssistant, call: ServiceCall) -> ServiceResp
             twiml_url = generate_simple_twiml_url(message)
 
             # Make the call using async Twilio client
-            twilio_call = await client.calls.create_async(
+            twilio_call = await _async_create_call(
+                client,
                 to=to_number,
                 from_=from_number,
                 url=twiml_url,
@@ -108,8 +132,6 @@ async def async_make_call(hass: HomeAssistant, call: ServiceCall) -> ServiceResp
         )
 
         # Wait a moment for sensor to be created
-        import asyncio
-
         await asyncio.sleep(0.5)
 
         # Get the entity_id of the sensor
@@ -127,6 +149,51 @@ async def async_make_call(hass: HomeAssistant, call: ServiceCall) -> ServiceResp
 
     except Exception as err:
         _LOGGER.error("Failed to make call to %s: %s", to_number, err)
+        return None
+
+
+async def async_send_mms(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
+    """Send an MMS message and return message information."""
+    to_number = call.data.get(ATTR_TO)
+    from_number = call.data.get("from_number")
+    message = call.data.get(ATTR_BODY, "")
+    media_url = call.data.get(ATTR_MEDIA_URL)
+
+    if not to_number:
+        _LOGGER.error("'to' number is required for send_mms service")
+        return None
+    if not from_number:
+        _LOGGER.error("'from_number' is required for send_mms service")
+        return None
+    if not media_url:
+        _LOGGER.error("'media_url' is required for send_mms service")
+        return None
+
+    # Get the Twilio client
+    client = get_twilio_client(hass)
+    if not client:
+        _LOGGER.error("Twilio client not found")
+        return None
+
+    twilio_args: dict[str, object] = {
+        "to": to_number,
+        "from_": from_number,
+        "media_url": media_url,
+    }
+    if message:
+        twilio_args[ATTR_BODY] = message
+
+    try:
+        twilio_message = await _async_create_message(client, **twilio_args)
+        _LOGGER.info("MMS queued to %s with SID %s", to_number, twilio_message.sid)
+        return {
+            "message_sid": twilio_message.sid,
+            "status": str(twilio_message.status),
+            "to": to_number,
+            "from": from_number,
+        }
+    except Exception as err:
+        _LOGGER.error("Failed to send MMS to %s: %s", to_number, err)
         return None
 
 

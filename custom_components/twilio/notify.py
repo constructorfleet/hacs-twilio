@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from pathlib import Path
 import re
@@ -480,7 +481,13 @@ class TwilioSMSNotificationEntity(NotifyEntity):
 
         for target in valid_targets:
             try:
-                self.client.messages.create(to=target, **twilio_args)
+                create_async = getattr(self.client.messages, "create_async", None)
+                if create_async and inspect.iscoroutinefunction(create_async):
+                    await create_async(to=target, **twilio_args)
+                else:
+                    await self.hass.async_add_executor_job(
+                        lambda: self.client.messages.create(to=target, **twilio_args)
+                    )
                 _LOGGER.debug("SMS/MMS sent to %s", target)
             except TwilioRestException as exc:
                 _LOGGER.error("Failed to send SMS/MMS to %s: %s", target, exc)

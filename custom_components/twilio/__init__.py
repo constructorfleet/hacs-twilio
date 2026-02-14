@@ -34,10 +34,12 @@ from .const import (
     SERVICE_START_RECORDING,
     SERVICE_PAUSE,
     SERVICE_MAKE_CALL,
+    SERVICE_SEND_MMS,
 )
 from .services import (
     async_make_call,
     async_pause_call,
+    async_send_mms,
     async_send_dtmf,
     async_start_recording,
 )
@@ -195,6 +197,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         hass.services.async_register(
             DOMAIN,
+            SERVICE_SEND_MMS,
+            lambda call: async_send_mms(hass, call),
+            schema=vol.Schema(
+                {
+                    vol.Required("to"): cv.string,
+                    vol.Required("from_number"): cv.string,
+                    vol.Required("media_url"): vol.Any(cv.string, [cv.string]),
+                    vol.Optional("body", default=""): cv.string,
+                }
+            ),
+            supports_response=SupportsResponse.ONLY,
+        )
+
+        hass.services.async_register(
+            DOMAIN,
             SERVICE_SEND_DTMF,
             lambda call: async_send_dtmf(hass, call),
             schema=vol.Schema(
@@ -262,6 +279,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not remaining_clients:
             # Unregister services once the last Twilio entry is removed.
             hass.services.async_remove(DOMAIN, SERVICE_MAKE_CALL)
+            hass.services.async_remove(DOMAIN, SERVICE_SEND_MMS)
             hass.services.async_remove(DOMAIN, SERVICE_SEND_DTMF)
             hass.services.async_remove(DOMAIN, SERVICE_START_RECORDING)
             hass.services.async_remove(DOMAIN, SERVICE_PAUSE)

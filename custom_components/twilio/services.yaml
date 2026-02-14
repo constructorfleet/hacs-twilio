@@ -114,6 +114,41 @@ make_call:
       selector:
         text:
 
+# Send MMS Service
+send_mms:
+  name: Send MMS
+  description: Send an MMS message via Twilio and return message information
+  fields:
+    to:
+      name: To
+      description: Destination phone number (with country code, e.g., +1234567890)
+      required: true
+      example: "+1234567890"
+      selector:
+        text:
+    from_number:
+      name: From Number
+      description: Your Twilio phone number (with country code, e.g., +1234567890)
+      required: true
+      example: "+1234567890"
+      selector:
+        text:
+    media_url:
+      name: Media URL
+      description: One URL or a list of URLs to media files to attach
+      required: true
+      example: "https://example.com/image.jpg"
+      selector:
+        object:
+    body:
+      name: Message Body
+      description: Optional text body
+      required: false
+      default: ""
+      example: "Photo from Home Assistant"
+      selector:
+        text:
+
 # Send DTMF Service
 send_dtmf:
   name: Send DTMF Digits
