@@ -135,11 +135,34 @@ send_mms:
         text:
     media_url:
       name: Media URL
-      description: One URL or a list of URLs to media files to attach
-      required: true
+      description: Optional URL or list of URLs to media files to attach
+      required: false
       example: "https://example.com/image.jpg"
       selector:
         object:
+    camera_entity:
+      name: Camera Entity
+      description: Optional camera entity to snapshot and attach
+      required: false
+      example: "camera.front_door"
+      selector:
+        entity:
+          domain: camera
+    image_entity:
+      name: Image Entity
+      description: Optional image entity to snapshot and attach
+      required: false
+      example: "image.front_door"
+      selector:
+        entity:
+          domain: image
+    image_path:
+      name: Image Path
+      description: Optional local image path under <config>/www to attach
+      required: false
+      example: "/config/www/snapshots/front.jpg"
+      selector:
+        text:
     body:
       name: Message Body
       description: Optional text body

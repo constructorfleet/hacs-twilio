@@ -203,7 +203,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 {
                     vol.Required("to"): cv.string,
                     vol.Required("from_number"): cv.string,
-                    vol.Required("media_url"): vol.Any(cv.string, [cv.string]),
+                    vol.Optional("media_url"): vol.Any(cv.string, [cv.string]),
+                    vol.Optional("camera_entity"): cv.entity_id,
+                    vol.Optional("image_entity"): cv.entity_id,
+                    vol.Optional("image_path"): cv.string,
                     vol.Optional("body", default=""): cv.string,
                 }
             ),
