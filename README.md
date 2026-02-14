@@ -306,6 +306,9 @@ The integration automatically creates sensor entities for all voice calls (both 
 - You receive an incoming call (with webhook configured)
 - Call status updates are received from Twilio
 
+**Auto-Cleanup**: Sensors are automatically removed after a configured period (default: 24 hours) once the call ends. This keeps your entity list clean. You can configure this timeout in the integration options (Settings → Devices & Services → Twilio → Configure):
+- **Sensor Cleanup Hours**: Set how long to keep call sensors after completion (1-168 hours, default: 24)
+
 Example usage in automations:
 
 ```yaml
@@ -383,6 +386,23 @@ automation:
         data:
           name: "Incoming Call"
           message: "Call from {{ trigger.event.data.from }}"
+```
+
+### Call Initiated Event
+
+Triggered when you make an outgoing call:
+
+```yaml
+automation:
+  - alias: "Log Outgoing Calls"
+    trigger:
+      - platform: event
+        event_type: twilio_call_initiated
+    action:
+      - service: logbook.log
+        data:
+          name: "Outgoing Call"
+          message: "Call to {{ trigger.event.data.to }} (SID: {{ trigger.event.data.call_sid }})"
 ```
 
 ### Transcription Received Event

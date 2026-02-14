@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 from typing import Any
 
@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
@@ -69,6 +70,62 @@ async def async_setup_entry(
         # Remove cleanup timer reference
         cleanup_timers.pop(call_sid, None)
     
+    # Clean up old sensors on startup (after reboot)
+    entity_reg = er.async_get(hass)
+    cleanup_cutoff = dt_util.now() - timedelta(hours=cleanup_hours)
+    
+    # Find all existing Twilio call sensor entities
+    for entity in er.async_entries_for_config_entry(entity_reg, config_entry.entry_id):
+        if entity.domain == "sensor" and entity.unique_id.startswith("twilio_call_"):
+            # Get the entity's state to check last updated time
+            state = hass.states.get(entity.entity_id)
+            if state:
+                # Check if it's a completed call
+                if state.state in ["completed", "busy", "no-answer", "failed", "canceled"]:
+                    # Try to get end_time from attributes, otherwise use last_changed
+                    end_time_str = state.attributes.get("end_time")
+                    if end_time_str:
+                        try:
+                            end_time = dt_util.parse_datetime(end_time_str)
+                        except (ValueError, TypeError):
+                            end_time = state.last_changed or state.last_updated
+                    else:
+                        end_time = state.last_changed or state.last_updated
+                    
+                    # If it's older than the cleanup threshold, remove it immediately
+                    if end_time and end_time < cleanup_cutoff:
+                        entity_reg.async_remove(entity.entity_id)
+                        _LOGGER.info(
+                            "Cleaned up old sensor %s (ended %s ago)",
+                            entity.entity_id,
+                            dt_util.now() - end_time,
+                        )
+                    else:
+                        # Schedule cleanup for the remaining time
+                        if end_time:
+                            time_since_end = dt_util.now() - end_time
+                            remaining_time = timedelta(hours=cleanup_hours) - time_since_end
+                            
+                            if remaining_time.total_seconds() > 0:
+                                # Extract call_sid from unique_id
+                                call_sid = entity.unique_id.replace("twilio_call_", "")
+                                cleanup_timers = hass.data[DOMAIN]["sensor_manager"]["cleanup_timers"]
+                                
+                                # Capture call_sid in closure correctly
+                                def make_cleanup_callback(sid):
+                                    return lambda _: hass.async_create_task(async_cleanup_sensor(sid))
+                                
+                                cleanup_timers[call_sid] = async_call_later(
+                                    hass, remaining_time.total_seconds(),
+                                    make_cleanup_callback(call_sid)
+                                )
+                                _LOGGER.debug(
+                                    "Scheduled cleanup for existing call %s in %s",
+                                    call_sid, remaining_time
+                                )
+
+
+    
     @callback
     def handle_call_event(event):
         """Handle call received event and create sensor."""
@@ -107,9 +164,14 @@ async def async_setup_entry(
             # Schedule cleanup after configured time
             if call_sid not in cleanup_timers:
                 cleanup_delay = timedelta(hours=cleanup_hours)
+                
+                # Capture call_sid in closure correctly
+                def make_cleanup_callback(sid):
+                    return lambda _: hass.async_create_task(async_cleanup_sensor(sid))
+                
                 cleanup_timers[call_sid] = async_call_later(
                     hass, cleanup_delay.total_seconds(), 
-                    lambda _: hass.async_create_task(async_cleanup_sensor(call_sid))
+                    make_cleanup_callback(call_sid)
                 )
                 _LOGGER.debug(
                     "Scheduled cleanup for call %s in %s hours", 
@@ -149,6 +211,7 @@ class TwilioCallSensor(SensorEntity):
         self._current_transcription = ""
         self._full_transcription = []
         self._ended = False
+        self._end_time = None
         
     @property
     def unique_id(self) -> str:
@@ -177,7 +240,7 @@ class TwilioCallSensor(SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes."""
-        return {
+        attrs = {
             ATTR_CALL_SID: self._call_sid,
             ATTR_PHONE_NUMBER: self._to if self._direction == "outbound-api" else self._from,
             ATTR_FROM: self._from,
@@ -186,6 +249,9 @@ class TwilioCallSensor(SensorEntity):
             ATTR_CURRENT_TRANSCRIPTION: self._current_transcription,
             ATTR_FULL_TRANSCRIPTION: "\n".join(self._full_transcription),
         }
+        if self._end_time:
+            attrs["end_time"] = self._end_time.isoformat()
+        return attrs
     
     @callback
     def update_from_event(self, event_data: dict[str, Any]) -> None:
@@ -211,6 +277,7 @@ class TwilioCallSensor(SensorEntity):
     def mark_ended(self) -> None:
         """Mark the call as ended."""
         self._ended = True
+        self._end_time = dt_util.now()
         self.async_write_ha_state()
     
     @property
