@@ -1,9 +1,8 @@
 """Common fixtures for Twilio integration tests."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.core import HomeAssistant
-from homeassistant.setup import async_setup_component
 from homeassistant.const import CONF_WEBHOOK_ID
 
 from custom_components.twilio.const import (

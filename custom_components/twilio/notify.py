@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import os
+from pathlib import Path
 from typing import Any
 import urllib.parse
 
@@ -20,11 +20,6 @@ from homeassistant.components.notify import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
-
-try:
-    from homeassistant.components.camera import async_get_image
-except ImportError:
-    async_get_image = None
 
 from .const import (
     CONF_FROM_NUMBER,
@@ -51,6 +46,7 @@ from .const import (
 from .helper import make_call, make_simple_call
 
 _LOGGER = logging.getLogger(__name__)
+MAX_MMS_MEDIA_SIZE_BYTES = 5 * 1024 * 1024
 
 # Platform types
 PLATFORM_SMS = "sms"
@@ -67,6 +63,7 @@ ATTR_TRANSCRIBE_CONFIG = "transcribe"
 ATTR_STATUS_CALLBACK = "status_callback"
 ATTR_STATUS_CALLBACK_METHOD = "status_callback_method"
 ATTR_CAMERA_ENTITY = "camera_entity"
+ATTR_IMAGE_ENTITY = "image_entity"
 ATTR_IMAGE_PATH = "image_path"
 
 # Call types
@@ -148,6 +145,81 @@ class TwilioSMSNotificationService(BaseNotificationService):
         self.hass = hass
         self.webhook_url = webhook_url
 
+    def _get_external_base_url(self) -> str | None:
+        """Return configured Home Assistant external URL, if available."""
+        if not self.hass:
+            return None
+
+        external_url = getattr(self.hass.config, "external_url", None)
+        if not external_url:
+            _LOGGER.warning(
+                "Cannot attach entity/file images to MMS: Home Assistant external_url is not configured"
+            )
+            return None
+
+        return external_url.rstrip("/")
+
+    def _build_entity_media_url(self, entity_id: str) -> str | None:
+        """Build a publicly reachable media URL for a camera/image entity."""
+        if not self.hass:
+            return None
+
+        external_base = self._get_external_base_url()
+        if not external_base:
+            return None
+
+        state = self.hass.states.get(entity_id)
+        if not state:
+            _LOGGER.error("Entity not found: %s", entity_id)
+            return None
+
+        entity_picture = state.attributes.get("entity_picture")
+        if isinstance(entity_picture, str) and entity_picture:
+            if entity_picture.startswith(("http://", "https://")):
+                return entity_picture
+            return f"{external_base}{entity_picture if entity_picture.startswith('/') else f'/{entity_picture}'}"
+
+        domain = entity_id.split(".", maxsplit=1)[0]
+        if domain == "camera":
+            return f"{external_base}/api/camera_proxy/{entity_id}"
+        if domain == "image":
+            return f"{external_base}/api/image_proxy/{entity_id}"
+
+        _LOGGER.warning(
+            "Unsupported entity domain for MMS attachment: %s", entity_id
+        )
+        return None
+
+    def _build_file_media_url(self, image_path: str) -> str | None:
+        """Build a publicly reachable media URL for a local image file."""
+        external_base = self._get_external_base_url()
+        if not external_base:
+            return None
+
+        path = Path(image_path)
+        if not path.exists():
+            _LOGGER.error("Image file not found: %s", image_path)
+            return None
+        if path.stat().st_size > MAX_MMS_MEDIA_SIZE_BYTES:
+            _LOGGER.warning(
+                "Image file is too large for MMS (max 5MB): %s", image_path
+            )
+            return None
+
+        # Only files under <config>/www are exposed via /local.
+        www_dir = Path(self.hass.config.config_dir) / "www"
+        try:
+            relative_path = path.resolve().relative_to(www_dir.resolve())
+        except ValueError:
+            _LOGGER.warning(
+                "Image file path must be under %s to be externally accessible: %s",
+                www_dir,
+                image_path,
+            )
+            return None
+
+        return f"{external_base}/local/{relative_path.as_posix()}"
+
     async def async_send_message(self, message: str = "", **kwargs: Any) -> None:
         """Send SMS/MMS to specified target user."""
         targets = kwargs.get(ATTR_TARGET)
@@ -167,27 +239,24 @@ class TwilioSMSNotificationService(BaseNotificationService):
 
         # Support camera entity
         if ATTR_CAMERA_ENTITY in data:
-            # TODO: Implement camera image upload to external hosting service
-            # For now, log a warning that camera entity requires external hosting
-            _LOGGER.warning(
-                "Camera entity support requires external image hosting. "
-                "The image will not be sent. "
-                "Please upload camera snapshots to a publicly accessible URL and use media_url instead."
-            )
+            if camera_url := self._build_entity_media_url(data[ATTR_CAMERA_ENTITY]):
+                _LOGGER.debug(
+                    "Using camera entity media URL. Size cannot be pre-validated against 5MB."
+                )
+                media_urls.append(camera_url)
+
+        # Support image entity
+        if ATTR_IMAGE_ENTITY in data:
+            if image_url := self._build_entity_media_url(data[ATTR_IMAGE_ENTITY]):
+                _LOGGER.debug(
+                    "Using image entity media URL. Size cannot be pre-validated against 5MB."
+                )
+                media_urls.append(image_url)
 
         # Support image file path
         if ATTR_IMAGE_PATH in data:
-            image_path = data[ATTR_IMAGE_PATH]
-            if os.path.exists(image_path):
-                # TODO: Implement image upload to external hosting service
-                # For now, log a warning that image paths require external hosting
-                _LOGGER.warning(
-                    "Image file path support requires external image hosting. "
-                    "The image will not be sent. "
-                    "Please upload the image to a publicly accessible URL and use media_url instead."
-                )
-            else:
-                _LOGGER.error("Image file not found: %s", image_path)
+            if image_url := self._build_file_media_url(data[ATTR_IMAGE_PATH]):
+                media_urls.append(image_url)
 
         # Add media URLs if any were collected
         if media_urls:

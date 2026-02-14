@@ -1,7 +1,6 @@
 """Tests for webhook.py functions."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from aiohttp import web
+from unittest.mock import AsyncMock, MagicMock
 
 from custom_components.twilio.webhook import handle_webhook
 from custom_components.twilio.const import (

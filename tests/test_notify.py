@@ -1,17 +1,20 @@
 """Tests for notify.py notification services."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from homeassistant.components.notify import ATTR_DATA, ATTR_TARGET
 
 from custom_components.twilio.notify import (
+    ATTR_CAMERA_ENTITY,
+    ATTR_IMAGE_ENTITY,
+    ATTR_IMAGE_PATH,
     TwilioSMSNotificationService,
     TwilioCallNotificationService,
     get_service,
 )
 from custom_components.twilio.const import (
     ATTR_MEDIAURL,
-    DOMAIN,
     DATA_TWILIO,
 )
 
@@ -125,6 +128,156 @@ async def test_sms_service_send_to_multiple_targets(hass, mock_twilio_client):
     
     # Verify message was sent to both targets
     assert mock_twilio_client.messages.create.call_count == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sms_service_send_mms_camera_entity(hass, mock_twilio_client):
+    """Test sending MMS using a camera entity picture URL."""
+    hass.config.external_url = "https://ha.example.com"
+    hass.states.async_set(
+        "camera.front_door",
+        "idle",
+        {"entity_picture": "/api/camera_proxy/camera.front_door?token=testtoken"},
+    )
+
+    service = TwilioSMSNotificationService(
+        mock_twilio_client, "+1234567890", hass, None
+    )
+
+    await service.async_send_message(
+        "Camera snapshot",
+        **{
+            ATTR_TARGET: ["+0987654321"],
+            ATTR_DATA: {
+                ATTR_CAMERA_ENTITY: "camera.front_door",
+            },
+        },
+    )
+
+    call_args = mock_twilio_client.messages.create.call_args[1]
+    assert ATTR_MEDIAURL in call_args
+    assert (
+        "https://ha.example.com/api/camera_proxy/camera.front_door?token=testtoken"
+        in call_args[ATTR_MEDIAURL]
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sms_service_send_mms_image_entity(hass, mock_twilio_client):
+    """Test sending MMS using an image entity picture URL."""
+    hass.config.external_url = "https://ha.example.com"
+    hass.states.async_set(
+        "image.front_door",
+        "ok",
+        {"entity_picture": "/api/image_proxy/image.front_door?token=imgtoken"},
+    )
+
+    service = TwilioSMSNotificationService(
+        mock_twilio_client, "+1234567890", hass, None
+    )
+
+    await service.async_send_message(
+        "Image snapshot",
+        **{
+            ATTR_TARGET: ["+0987654321"],
+            ATTR_DATA: {
+                ATTR_IMAGE_ENTITY: "image.front_door",
+            },
+        },
+    )
+
+    call_args = mock_twilio_client.messages.create.call_args[1]
+    assert ATTR_MEDIAURL in call_args
+    assert (
+        "https://ha.example.com/api/image_proxy/image.front_door?token=imgtoken"
+        in call_args[ATTR_MEDIAURL]
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sms_service_send_mms_image_path_from_www(hass, mock_twilio_client, tmp_path):
+    """Test sending MMS using local file path under <config>/www."""
+    hass.config.external_url = "https://ha.example.com"
+    hass.config.config_dir = str(tmp_path)
+    image_file = Path(tmp_path) / "www" / "snapshots" / "front.jpg"
+    image_file.parent.mkdir(parents=True, exist_ok=True)
+    image_file.write_bytes(b"test-image")
+
+    service = TwilioSMSNotificationService(
+        mock_twilio_client, "+1234567890", hass, None
+    )
+
+    await service.async_send_message(
+        "File snapshot",
+        **{
+            ATTR_TARGET: ["+0987654321"],
+            ATTR_DATA: {
+                ATTR_IMAGE_PATH: str(image_file),
+            },
+        },
+    )
+
+    call_args = mock_twilio_client.messages.create.call_args[1]
+    assert ATTR_MEDIAURL in call_args
+    assert "https://ha.example.com/local/snapshots/front.jpg" in call_args[ATTR_MEDIAURL]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sms_service_send_mms_image_path_too_large(hass, mock_twilio_client, tmp_path):
+    """Test oversized MMS file is skipped."""
+    hass.config.external_url = "https://ha.example.com"
+    hass.config.config_dir = str(tmp_path)
+    image_file = Path(tmp_path) / "www" / "snapshots" / "large.jpg"
+    image_file.parent.mkdir(parents=True, exist_ok=True)
+    image_file.write_bytes(b"x" * (5 * 1024 * 1024 + 1))
+
+    service = TwilioSMSNotificationService(
+        mock_twilio_client, "+1234567890", hass, None
+    )
+
+    await service.async_send_message(
+        "Oversized file",
+        **{
+            ATTR_TARGET: ["+0987654321"],
+            ATTR_DATA: {
+                ATTR_IMAGE_PATH: str(image_file),
+            },
+        },
+    )
+
+    call_args = mock_twilio_client.messages.create.call_args[1]
+    assert ATTR_MEDIAURL not in call_args
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sms_service_entity_attachment_without_external_url_logs_warning(
+    hass, mock_twilio_client, caplog
+):
+    """Test camera/image attachment is skipped when external_url is missing."""
+    hass.states.async_set("camera.front_door", "idle", {})
+
+    service = TwilioSMSNotificationService(
+        mock_twilio_client, "+1234567890", hass, None
+    )
+
+    await service.async_send_message(
+        "No external URL",
+        **{
+            ATTR_TARGET: ["+0987654321"],
+            ATTR_DATA: {
+                ATTR_CAMERA_ENTITY: "camera.front_door",
+            },
+        },
+    )
+
+    call_args = mock_twilio_client.messages.create.call_args[1]
+    assert ATTR_MEDIAURL not in call_args
+    assert "external_url is not configured" in caplog.text
 
 
 @pytest.mark.unit

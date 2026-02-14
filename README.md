@@ -111,7 +111,7 @@ data:
 
 #### MMS with Camera Entity
 
-**Note:** Camera entity support requires the image to be hosted at a publicly accessible URL. Twilio cannot access local files directly.
+**Note:** Home Assistant must have `external_url` configured (Settings -> System -> Network), so Twilio can fetch the image.
 
 ```yaml
 service: notify.twilio_sms
@@ -122,6 +122,34 @@ data:
   data:
     camera_entity: "camera.front_door"
 ```
+
+#### MMS with Image Entity
+
+```yaml
+service: notify.twilio_sms
+data:
+  message: "Image entity update"
+  target:
+    - "+1234567890"
+  data:
+    image_entity: "image.front_door"
+```
+
+#### MMS with Snapshot File Path
+
+If you use `camera.snapshot`, save the file under `<config>/www` and pass that path:
+
+```yaml
+service: notify.twilio_sms
+data:
+  message: "Snapshot from file"
+  target:
+    - "+1234567890"
+  data:
+    image_path: "/config/www/snapshots/front_door.jpg"
+```
+
+Twilio MMS media limit is 5 MB. Local `image_path` files larger than 5 MB are skipped.
 
 #### MMS with Status Callbacks
 
@@ -508,7 +536,8 @@ logger:
 2. **Webhook Not Receiving Data**: Ensure your Home Assistant instance is accessible from the internet and the webhook URL is correctly configured in Twilio
 3. **SMS Not Sending**: Verify your Twilio account has SMS capabilities and sufficient balance
 4. **Voice Calls Failing**: Check that your Twilio phone number has voice capabilities enabled
-5. **Camera Entity Images Not Sending**: Camera entities and local image files require external hosting. Upload images to a publicly accessible URL and use the `media_url` parameter instead.
+5. **Camera/Image Attachments Not Sending**: Ensure Home Assistant `external_url` is configured and reachable from the internet.
+6. **Snapshot File Path Not Sending**: `image_path` must point to a file under `<config>/www` so it is available via `/local/...`.
 
 ## Development
 

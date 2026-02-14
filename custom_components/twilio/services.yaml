@@ -9,8 +9,9 @@
 #   target: List of phone numbers (with country code, e.g., +1234567890)
 #   data:
 #     media_url: (Optional) URL(s) of media to send (for MMS)
-#     camera_entity: (Optional) Camera entity ID to capture and send (requires external hosting)
-#     image_path: (Optional) Local image file path (requires external hosting)
+#     camera_entity: (Optional) Camera entity ID to attach (requires Home Assistant external_url)
+#     image_entity: (Optional) Image entity ID to attach (requires Home Assistant external_url)
+#     image_path: (Optional) Local image file path under <config>/www (requires Home Assistant external_url, max 5MB)
 #     status_callback: (Optional) Enable status callbacks (true/false)
 #     status_callback_method: (Optional) HTTP method for status callbacks (POST/GET/PUT, default: POST)
 
