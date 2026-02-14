@@ -57,6 +57,8 @@ CONFIG_SCHEMA = vol.Schema(
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Twilio component."""
+    if DOMAIN not in config:
+        return True
     if not hass.config_entries.async_entries(DOMAIN) and DOMAIN in config:
         conf = config[DOMAIN]
         hass.async_create_task(
@@ -80,6 +82,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     webhook_id = entry.data[CONF_WEBHOOK_ID]
     webhook_url = webhook_component.async_generate_url(hass, webhook_id)
 
+    # Reload/setup can race with stale webhook handlers; replace defensively.
+    webhook_component.async_unregister(hass, webhook_id)
     webhook_component.async_register(hass, DOMAIN, "Twilio", webhook_id, handle_webhook)
 
     # Create async HTTP client for Twilio
