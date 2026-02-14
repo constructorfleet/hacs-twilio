@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 from typing import Any
@@ -35,8 +34,6 @@ from .const import (
     CONF_TIMEOUT,
     CONF_NUM_DIGITS,
     CONF_FINISH_ON_KEY,
-    CONF_RECEIVE_STATUS_METHOD,
-    CONF_TRANSCRIBE,
     CONF_TRANSCRIBE_LANGUAGE,
     CONF_PROFANITY_FILTER,
     CONF_PARTIAL_RESULTS,
@@ -170,7 +167,6 @@ class TwilioSMSNotificationService(BaseNotificationService):
 
         # Support camera entity
         if ATTR_CAMERA_ENTITY in data:
-            camera_entity = data[ATTR_CAMERA_ENTITY]
             # TODO: Implement camera image upload to external hosting service
             # For now, log a warning that camera entity requires external hosting
             _LOGGER.warning(

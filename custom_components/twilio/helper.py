@@ -16,6 +16,8 @@ from .const import (
     ATTR_CALL_STATUS,
     ATTR_FROM,
     ATTR_TO,
+    DATA_TWILIO,
+    DOMAIN,
     EVENT_TWILIO_CALL_INITIATED,
 )
 
@@ -24,7 +26,6 @@ _LOGGER = logging.getLogger(__name__)
 
 def get_twilio_client(hass: HomeAssistant) -> Client | None:
     """Get Twilio client from hass.data."""
-    from .const import DATA_TWILIO, DOMAIN
     
     # Check if DOMAIN/DATA_TWILIO key exists
     if DATA_TWILIO in hass.data:
@@ -45,7 +46,6 @@ def get_twilio_client(hass: HomeAssistant) -> Client | None:
 
 def get_webhook_url(hass: HomeAssistant) -> str | None:
     """Get webhook URL from hass.data."""
-    from .const import DOMAIN
     
     if DOMAIN in hass.data:
         data = hass.data[DOMAIN]
