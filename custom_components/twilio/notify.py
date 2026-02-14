@@ -44,6 +44,11 @@ from .const import (
     DATA_TWILIO,
     DOMAIN,
     ATTR_MEDIAURL,
+    ATTR_CALL_SID,
+    ATTR_CALL_STATUS,
+    ATTR_FROM,
+    ATTR_TO,
+    EVENT_TWILIO_CALL_INITIATED,
     DEFAULT_TIMEOUT,
     DEFAULT_NUM_DIGITS,
     DEFAULT_FINISH_ON_KEY,
@@ -310,7 +315,20 @@ class TwilioCallNotificationService(BaseNotificationService):
                 _LOGGER.warning("Invalid status_callback_method: %s, using POST", method)
                 call_args["status_callback_method"] = "POST"
 
-        self.client.calls.create(**call_args)
+        call = self.client.calls.create(**call_args)
+        
+        # Fire event for call initiated
+        if self.hass:
+            self.hass.bus.fire(
+                EVENT_TWILIO_CALL_INITIATED,
+                {
+                    ATTR_CALL_SID: call.sid,
+                    ATTR_TO: target,
+                    ATTR_FROM: self.from_number,
+                    ATTR_CALL_STATUS: call.status,
+                    "direction": "outbound-api",
+                },
+            )
 
     def _make_twiml_call(self, target: str, twiml_url: str, data: dict[str, Any]) -> None:
         """Make a call with custom TwiML."""
@@ -330,7 +348,20 @@ class TwilioCallNotificationService(BaseNotificationService):
                 _LOGGER.warning("Invalid status_callback_method: %s, using POST", method)
                 call_args["status_callback_method"] = "POST"
 
-        self.client.calls.create(**call_args)
+        call = self.client.calls.create(**call_args)
+        
+        # Fire event for call initiated
+        if self.hass:
+            self.hass.bus.fire(
+                EVENT_TWILIO_CALL_INITIATED,
+                {
+                    ATTR_CALL_SID: call.sid,
+                    ATTR_TO: target,
+                    ATTR_FROM: self.from_number,
+                    ATTR_CALL_STATUS: call.status,
+                    "direction": "outbound-api",
+                },
+            )
 
     def _generate_interactive_twiml_url(
         self, message: str, data: dict[str, Any]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import logging
 from typing import Any
 
@@ -10,10 +11,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_call_later
 
 from .const import (
     DOMAIN,
     EVENT_TWILIO_CALL_RECEIVED,
+    EVENT_TWILIO_CALL_INITIATED,
     EVENT_TWILIO_CALL_ENDED,
     EVENT_TWILIO_TRANSCRIPTION,
     ATTR_CALL_SID,
@@ -24,6 +27,8 @@ from .const import (
     ATTR_CURRENT_TRANSCRIPTION,
     ATTR_FULL_TRANSCRIPTION,
     ATTR_PHONE_NUMBER,
+    CONF_SENSOR_CLEANUP_HOURS,
+    DEFAULT_SENSOR_CLEANUP_HOURS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,11 +40,34 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Twilio voice call sensors from a config entry."""
+    # Get cleanup hours from options or use default
+    cleanup_hours = config_entry.options.get(
+        CONF_SENSOR_CLEANUP_HOURS, DEFAULT_SENSOR_CLEANUP_HOURS
+    )
+    
     # Store reference to async_add_entities for dynamic entity creation
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN].setdefault("sensor_manager", {})
     hass.data[DOMAIN]["sensor_manager"]["async_add_entities"] = async_add_entities
     hass.data[DOMAIN]["sensor_manager"]["entities"] = {}
+    hass.data[DOMAIN]["sensor_manager"]["cleanup_timers"] = {}
+    
+    async def async_cleanup_sensor(call_sid: str):
+        """Clean up a sensor entity."""
+        entities_dict = hass.data[DOMAIN]["sensor_manager"]["entities"]
+        cleanup_timers = hass.data[DOMAIN]["sensor_manager"]["cleanup_timers"]
+        
+        if call_sid in entities_dict:
+            sensor = entities_dict.pop(call_sid)
+            
+            # Remove the entity from the registry
+            entity_reg = er.async_get(hass)
+            if entity_id := entity_reg.async_get_entity_id("sensor", DOMAIN, sensor.unique_id):
+                entity_reg.async_remove(entity_id)
+                _LOGGER.debug("Cleaned up sensor for call %s", call_sid)
+        
+        # Remove cleanup timer reference
+        cleanup_timers.pop(call_sid, None)
     
     @callback
     def handle_call_event(event):
@@ -68,11 +96,25 @@ async def async_setup_entry(
             return
         
         entities_dict = hass.data[DOMAIN]["sensor_manager"]["entities"]
+        cleanup_timers = hass.data[DOMAIN]["sensor_manager"]["cleanup_timers"]
+        
         if call_sid in entities_dict:
             sensor = entities_dict[call_sid]
             sensor.update_from_event(event.data)
             # Mark as ended but keep entity for historical reference
             sensor.mark_ended()
+            
+            # Schedule cleanup after configured time
+            if call_sid not in cleanup_timers:
+                cleanup_delay = timedelta(hours=cleanup_hours)
+                cleanup_timers[call_sid] = async_call_later(
+                    hass, cleanup_delay.total_seconds(), 
+                    lambda _: hass.async_create_task(async_cleanup_sensor(call_sid))
+                )
+                _LOGGER.debug(
+                    "Scheduled cleanup for call %s in %s hours", 
+                    call_sid, cleanup_hours
+                )
     
     @callback
     def handle_transcription(event):
@@ -88,6 +130,7 @@ async def async_setup_entry(
     
     # Register event listeners
     hass.bus.async_listen(EVENT_TWILIO_CALL_RECEIVED, handle_call_event)
+    hass.bus.async_listen(EVENT_TWILIO_CALL_INITIATED, handle_call_event)
     hass.bus.async_listen(EVENT_TWILIO_CALL_ENDED, handle_call_ended)
     hass.bus.async_listen(EVENT_TWILIO_TRANSCRIPTION, handle_transcription)
 

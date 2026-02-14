@@ -6,6 +6,7 @@ DOMAIN = "twilio"
 CONF_ACCOUNT_SID = "account_sid"
 CONF_AUTH_TOKEN = "auth_token"
 CONF_FROM_NUMBER = "from_number"
+CONF_SENSOR_CLEANUP_HOURS = "sensor_cleanup_hours"
 
 # Data constants
 DATA_TWILIO = DOMAIN
@@ -13,6 +14,7 @@ DATA_TWILIO = DOMAIN
 # Event types
 EVENT_TWILIO_SMS_RECEIVED = f"{DOMAIN}_sms_received"
 EVENT_TWILIO_CALL_RECEIVED = f"{DOMAIN}_call_received"
+EVENT_TWILIO_CALL_INITIATED = f"{DOMAIN}_call_initiated"
 EVENT_TWILIO_CALL_ENDED = f"{DOMAIN}_call_ended"
 EVENT_TWILIO_TRANSCRIPTION = f"{DOMAIN}_transcription_received"
 EVENT_TWILIO_DTMF = f"{DOMAIN}_dtmf_received"
@@ -63,6 +65,7 @@ DEFAULT_FINISH_ON_KEY = "#"
 DEFAULT_VOICE = "alice"
 DEFAULT_LANGUAGE = "en-US"
 DEFAULT_TRANSCRIBE_LANGUAGE = "en-US"
+DEFAULT_SENSOR_CLEANUP_HOURS = 24
 
 # Services
 SERVICE_SEND_DTMF = "send_dtmf"
