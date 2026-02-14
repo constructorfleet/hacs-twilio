@@ -32,7 +32,7 @@ jobs:
         source .venv/bin/activate
         uv pip install ruff
         ruff check custom_components/twilio/
-      continue-on-error: true
+      continue-on-error: false
     
     - name: Run tests with pytest
       run: |
