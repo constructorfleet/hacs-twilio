@@ -60,7 +60,9 @@ def _normalize_selected_numbers(value: Any) -> list[str]:
     return [str(number).strip() for number in value if str(number).strip()]
 
 
-def _build_phone_numbers_schema(default_numbers: list[str], options: list[str]) -> vol.Schema:
+def _build_phone_numbers_schema(
+    default_numbers: list[str], options: list[str]
+) -> vol.Schema:
     """Build form schema for selecting Twilio phone numbers."""
     select_options: Sequence[SelectOptionDict] = [
         {"value": number, "label": number} for number in options
@@ -130,7 +132,7 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                info = await validate_input(self.hass, user_input)
+                await validate_input(self.hass, user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
@@ -156,14 +158,18 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.error("Failed to fetch incoming phone numbers: %s", err)
                     errors["base"] = "cannot_connect"
                 except Exception:
-                    _LOGGER.exception("Unexpected error fetching incoming phone numbers")
+                    _LOGGER.exception(
+                        "Unexpected error fetching incoming phone numbers"
+                    )
                     errors["base"] = "unknown"
                 else:
                     return await self.async_step_phone_numbers(
                         {
-                            CONF_PHONE_NUMBERS: self._available_numbers
-                            if len(self._available_numbers) == 1
-                            else []
+                            CONF_PHONE_NUMBERS: (
+                                self._available_numbers
+                                if len(self._available_numbers) == 1
+                                else []
+                            )
                         }
                     )
 
@@ -206,7 +212,9 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 description_placeholders={"webhook_url": webhook_url},
             )
 
-        default_numbers = self._available_numbers if len(self._available_numbers) == 1 else []
+        default_numbers = (
+            self._available_numbers if len(self._available_numbers) == 1 else []
+        )
         return self.async_show_form(
             step_id="phone_numbers",
             data_schema=_build_phone_numbers_schema(
@@ -260,7 +268,9 @@ class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
         auth_token = self.config_entry.data.get(CONF_AUTH_TOKEN)
         if not account_sid or not auth_token:
             return []
-        return await _async_get_incoming_phone_numbers(hass=self.hass, account_sid=account_sid, auth_token=auth_token)
+        return await _async_get_incoming_phone_numbers(
+            hass=self.hass, account_sid=account_sid, auth_token=auth_token
+        )
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
