@@ -40,7 +40,7 @@ from .webhook import handle_webhook
 _LOGGER = logging.getLogger(__name__)
 _SERVICES_REGISTERED = "services_registered"
 
-PLATFORMS = [Platform.NOTIFY, Platform.SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.NOTIFY]
 
 CONFIG_SCHEMA = vol.Schema(
     {

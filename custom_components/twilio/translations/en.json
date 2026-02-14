@@ -1,22 +1,38 @@
 {
-  "config": {
-    "step": {
-      "user": {
-        "title": "Twilio Integration Setup",
-        "description": "Set up your Twilio integration. You will need your Account SID and Auth Token from the Twilio Console.",
-        "data": {
-          "account_sid": "Account SID",
-          "auth_token": "Auth Token"
+    "config": {
+        "step": {
+            "user": {
+                "title": "Twilio Integration Setup",
+                "description": "Set up your Twilio integration. You will need your Account SID and Auth Token from the Twilio Console.",
+                "data": {
+                    "account_sid": "Account SID",
+                    "auth_token": "Auth Token"
+                }
+            }
+        },
+        "error": {
+            "cannot_connect": "Failed to connect to Twilio. Please check your network connection.",
+            "invalid_auth": "Invalid Account SID or Auth Token. Please check your credentials.",
+            "unknown": "Unexpected error occurred. Please check the logs."
+        },
+        "abort": {
+            "already_configured": "This Twilio account is already configured."
         }
-      }
     },
-    "error": {
-      "cannot_connect": "Failed to connect to Twilio. Please check your network connection.",
-      "invalid_auth": "Invalid Account SID or Auth Token. Please check your credentials.",
-      "unknown": "Unexpected error occurred. Please check the logs."
-    },
-    "abort": {
-      "already_configured": "This Twilio account is already configured."
+    "options": {
+        "step": {
+            "user": {
+                "title": "Twilio Options",
+                "description": "Configure options for the Twilio integration.",
+                "data": {
+                    "sensor_cleanup_hours": "Sensor Cleanup Hours",
+                    "phone_numbers": "Phone Numbers"
+                },
+                "data_description": {
+                    "sensor_cleanup_hours": "Number of hours after which sensors are cleaned up",
+                    "phone_numbers": "List of phone numbers to use with Twilio"
+                }
+            }
+        }
     }
-  }
 }

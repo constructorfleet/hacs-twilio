@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Sequence
 
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
@@ -14,15 +14,20 @@ from homeassistant.components import webhook
 from homeassistant.const import CONF_WEBHOOK_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.selector import (
+    SelectOptionDict,
     TextSelector,
     NumberSelector,
     NumberSelectorConfig,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .const import (
     CONF_ACCOUNT_SID,
     CONF_AUTH_TOKEN,
     CONF_FROM_NUMBER,
+    CONF_PHONE_NUMBERS,
     CONF_SENSOR_CLEANUP_HOURS,
     DEFAULT_SENSOR_CLEANUP_HOURS,
     DOMAIN,
@@ -125,21 +130,88 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle Twilio options."""
 
+    async def _async_get_phone_number_options(self) -> list[str]:
+        """Fetch incoming Twilio phone numbers for this account."""
+        account_sid = self.config_entry.data.get(CONF_ACCOUNT_SID)
+        auth_token = self.config_entry.data.get(CONF_AUTH_TOKEN)
+        if not account_sid or not auth_token:
+            return []
+
+        client = Client(account_sid, auth_token)
+        numbers = await self.hass.async_add_executor_job(
+            lambda: client.incoming_phone_numbers.list(limit=1000)
+        )
+        return sorted(
+            {
+                str(number.phone_number).strip()
+                for number in numbers
+                if getattr(number, "phone_number", None)
+            }
+        )
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Manage the options."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
+            selected_numbers = user_input.get(CONF_PHONE_NUMBERS, [])
+            if not isinstance(selected_numbers, list):
+                selected_numbers = []
+            selected_numbers = [
+                str(number).strip()
+                for number in selected_numbers
+                if str(number).strip()
+            ]
+
+            user_input[CONF_PHONE_NUMBERS] = selected_numbers
+            # Keep legacy option populated for backward compatibility.
+            user_input[CONF_FROM_NUMBER] = (
+                selected_numbers[0] if selected_numbers else ""
+            )
             return self.async_create_entry(title="", data=user_input)
+
+        available_numbers: list[str] = []
+        try:
+            available_numbers = await self._async_get_phone_number_options()
+        except TwilioRestException as err:
+            _LOGGER.error("Failed to fetch incoming phone numbers: %s", err)
+            errors["base"] = "cannot_connect"
+        except Exception:
+            _LOGGER.exception("Unexpected error fetching incoming phone numbers")
+            errors["base"] = "unknown"
+
+        default_numbers = self.config_entry.options.get(CONF_PHONE_NUMBERS)
+        if not isinstance(default_numbers, list):
+            fallback_number = self.config_entry.options.get(CONF_FROM_NUMBER, "")
+            default_numbers = [fallback_number] if fallback_number else []
+
+        # Preserve already-selected numbers even when the Twilio API doesn't return them.
+        for selected in default_numbers:
+            if selected and selected not in available_numbers:
+                available_numbers.append(selected)
+        available_numbers.sort()
+
+        select_options: Sequence[SelectOptionDict] = [
+            {"value": number, "label": number} for number in available_numbers
+        ]
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        CONF_FROM_NUMBER,
-                        default=self.config_entry.options.get(CONF_FROM_NUMBER, ""),
-                    ): str,
+                        CONF_PHONE_NUMBERS,
+                        default=default_numbers,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=select_options,
+                            multiple=True,
+                            custom_value=True,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
                     vol.Optional(
                         CONF_SENSOR_CLEANUP_HOURS,
                         default=self.config_entry.options.get(
@@ -148,6 +220,7 @@ class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
                     ): NumberSelector(NumberSelectorConfig(min=1, max=168)),
                 }
             ),
+            errors=errors,
         )
 
 
