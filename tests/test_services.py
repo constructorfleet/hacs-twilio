@@ -7,6 +7,7 @@ from homeassistant.core import ServiceCall
 from custom_components.twilio.services import (
     async_make_call,
     async_pause_call,
+    async_send_mms,
     async_send_dtmf,
     async_start_recording,
 )
@@ -123,6 +124,54 @@ async def test_async_make_call_missing_from(mock_twilio_client):
     result = await async_make_call(hass, service_call)
     
     assert result is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_send_mms_success(mock_twilio_client):
+    """Test sending MMS via service."""
+    hass = create_mock_hass_with_client(mock_twilio_client)
+
+    call_data = {
+        "to": "+1234567890",
+        "from_number": "+0987654321",
+        "media_url": "https://example.com/image.jpg",
+        "body": "Photo attached",
+    }
+    service_call = ServiceCall(hass, "twilio", "send_mms", call_data)
+
+    result = await async_send_mms(hass, service_call)
+
+    assert result is not None
+    assert result["message_sid"] == "SM1234567890abcdef1234567890abcdef"
+    assert result["status"] == "queued"
+    assert result["to"] == "+1234567890"
+    assert result["from"] == "+0987654321"
+
+    mock_twilio_client.messages.create.assert_called_once()
+    message_kwargs = mock_twilio_client.messages.create.call_args.kwargs
+    assert message_kwargs["to"] == "+1234567890"
+    assert message_kwargs["from_"] == "+0987654321"
+    assert message_kwargs["media_url"] == "https://example.com/image.jpg"
+    assert message_kwargs["body"] == "Photo attached"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_send_mms_missing_media_url(mock_twilio_client):
+    """Test sending MMS without media_url."""
+    hass = create_mock_hass_with_client(mock_twilio_client)
+
+    call_data = {
+        "to": "+1234567890",
+        "from_number": "+0987654321",
+    }
+    service_call = ServiceCall(hass, "twilio", "send_mms", call_data)
+
+    result = await async_send_mms(hass, service_call)
+
+    assert result is None
+    mock_twilio_client.messages.create.assert_not_called()
 
 
 @pytest.mark.unit

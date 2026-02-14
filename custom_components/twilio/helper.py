@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import urllib.parse
 from typing import Any
@@ -133,8 +135,11 @@ async def make_call(
             call_args["status_callback_method"] = "POST"
 
     try:
-        # Twilio client with AsyncTwilioHttpClient returns awaitable
-        call = await client.calls.create_async(**call_args)
+        create_async = getattr(client.calls, "create_async", None)
+        if create_async and inspect.iscoroutinefunction(create_async):
+            call = await create_async(**call_args)
+        else:
+            call = await asyncio.to_thread(lambda: client.calls.create(**call_args))
 
         # Fire event if hass is available
         if hass and call.sid and call.status:

@@ -17,6 +17,7 @@ from custom_components.twilio.const import (
     DOMAIN,
     SERVICE_MAKE_CALL,
     SERVICE_PAUSE,
+    SERVICE_SEND_MMS,
     SERVICE_SEND_DTMF,
     SERVICE_START_RECORDING,
 )
@@ -109,6 +110,7 @@ async def test_async_setup_entry(
     service_calls = mock_hass.services.async_register.call_args_list
     service_names = [call[0][1] for call in service_calls]
     assert SERVICE_MAKE_CALL in service_names
+    assert SERVICE_SEND_MMS in service_names
     assert SERVICE_SEND_DTMF in service_names
     assert SERVICE_START_RECORDING in service_names
     assert SERVICE_PAUSE in service_names
@@ -158,6 +160,8 @@ async def test_async_unload_entry(mock_webhook):
     
     # Verify services were unregistered (when it's the last entry)
     assert mock_hass.services.async_remove.called
+    removed_services = [call.args[1] for call in mock_hass.services.async_remove.call_args_list]
+    assert SERVICE_SEND_MMS in removed_services
 
 
 @pytest.mark.unit
