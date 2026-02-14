@@ -36,6 +36,54 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+async def _async_get_incoming_phone_numbers(
+    hass: HomeAssistant, account_sid: str, auth_token: str
+) -> list[str]:
+    """Fetch incoming Twilio phone numbers for an account."""
+    client = Client(account_sid, auth_token)
+    numbers = await hass.async_add_executor_job(
+        lambda: client.incoming_phone_numbers.list(limit=1000)
+    )
+    return sorted(
+        {
+            str(number.phone_number).strip()
+            for number in numbers
+            if getattr(number, "phone_number", None)
+        }
+    )
+
+
+def _normalize_selected_numbers(value: Any) -> list[str]:
+    """Normalize selected phone numbers from flow input."""
+    if not isinstance(value, list):
+        return []
+    return [str(number).strip() for number in value if str(number).strip()]
+
+
+def _build_phone_numbers_schema(
+    default_numbers: list[str], options: list[str]
+) -> vol.Schema:
+    """Build form schema for selecting Twilio phone numbers."""
+    select_options: Sequence[SelectOptionDict] = [
+        {"value": number, "label": number} for number in options
+    ]
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_PHONE_NUMBERS,
+                default=default_numbers,
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=select_options,
+                    multiple=True,
+                    custom_value=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        }
+    )
+
+
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect.
 
@@ -66,6 +114,8 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Twilio."""
 
     VERSION = 1
+    _user_data: dict[str, str]
+    _available_numbers: list[str]
 
     @staticmethod
     def async_get_options_flow(
@@ -82,7 +132,7 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                info = await validate_input(self.hass, user_input)
+                await validate_input(self.hass, user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
@@ -93,19 +143,35 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 await self.async_set_unique_id(user_input[CONF_ACCOUNT_SID])
                 self._abort_if_unique_id_configured()
-                # Generate webhook ID
-                webhook_id = webhook.async_generate_id()
-                webhook_url = webhook.async_generate_url(self.hass, webhook_id)
-
-                return self.async_create_entry(
-                    title=info["title"],
-                    data={
-                        CONF_ACCOUNT_SID: user_input[CONF_ACCOUNT_SID],
-                        CONF_AUTH_TOKEN: user_input[CONF_AUTH_TOKEN],
-                        CONF_WEBHOOK_ID: webhook_id,
-                    },
-                    description_placeholders={"webhook_url": webhook_url},
-                )
+                self._user_data = {
+                    CONF_ACCOUNT_SID: user_input[CONF_ACCOUNT_SID],
+                    CONF_AUTH_TOKEN: user_input[CONF_AUTH_TOKEN],
+                }
+                self._available_numbers = []
+                try:
+                    self._available_numbers = await _async_get_incoming_phone_numbers(
+                        self.hass,
+                        self._user_data[CONF_ACCOUNT_SID],
+                        self._user_data[CONF_AUTH_TOKEN],
+                    )
+                except TwilioRestException as err:
+                    _LOGGER.error("Failed to fetch incoming phone numbers: %s", err)
+                    errors["base"] = "cannot_connect"
+                except Exception:
+                    _LOGGER.exception(
+                        "Unexpected error fetching incoming phone numbers"
+                    )
+                    errors["base"] = "unknown"
+                else:
+                    return await self.async_step_phone_numbers(
+                        {
+                            CONF_PHONE_NUMBERS: (
+                                self._available_numbers
+                                if len(self._available_numbers) == 1
+                                else []
+                            )
+                        }
+                    )
 
         data_schema = vol.Schema(
             {
@@ -120,11 +186,77 @@ class TwilioConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_phone_numbers(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Handle phone number selection after credentials validation."""
+        if user_input is not None:
+            selected_numbers = _normalize_selected_numbers(
+                user_input.get(CONF_PHONE_NUMBERS, [])
+            )
+            webhook_id = webhook.async_generate_id()
+            webhook_url = webhook.async_generate_url(self.hass, webhook_id)
+            options = {
+                CONF_PHONE_NUMBERS: selected_numbers,
+                # Keep legacy option populated for backward compatibility.
+                CONF_FROM_NUMBER: selected_numbers[0] if selected_numbers else "",
+            }
+            return self.async_create_entry(
+                title="Twilio",
+                data={
+                    CONF_ACCOUNT_SID: self._user_data[CONF_ACCOUNT_SID],
+                    CONF_AUTH_TOKEN: self._user_data[CONF_AUTH_TOKEN],
+                    CONF_WEBHOOK_ID: webhook_id,
+                },
+                options=options,
+                description_placeholders={"webhook_url": webhook_url},
+            )
+
+        default_numbers = (
+            self._available_numbers if len(self._available_numbers) == 1 else []
+        )
+        return self.async_show_form(
+            step_id="phone_numbers",
+            data_schema=_build_phone_numbers_schema(
+                default_numbers=default_numbers,
+                options=self._available_numbers,
+            ),
+        )
+
     async def async_step_import(
         self, import_config: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Import config from configuration.yaml."""
-        return await self.async_step_user(import_config)
+        if import_config is None:
+            return self.async_abort(reason="invalid_auth")
+
+        await self.async_set_unique_id(import_config[CONF_ACCOUNT_SID])
+        self._abort_if_unique_id_configured()
+        webhook_id = webhook.async_generate_id()
+        webhook_url = webhook.async_generate_url(self.hass, webhook_id)
+        options: dict[str, Any] = {}
+        try:
+            numbers = await _async_get_incoming_phone_numbers(
+                self.hass,
+                import_config[CONF_ACCOUNT_SID],
+                import_config[CONF_AUTH_TOKEN],
+            )
+        except Exception:
+            _LOGGER.debug("Failed to fetch incoming phone numbers during import")
+        else:
+            options[CONF_PHONE_NUMBERS] = numbers
+            options[CONF_FROM_NUMBER] = numbers[0] if numbers else ""
+
+        return self.async_create_entry(
+            title="Twilio",
+            data={
+                CONF_ACCOUNT_SID: import_config[CONF_ACCOUNT_SID],
+                CONF_AUTH_TOKEN: import_config[CONF_AUTH_TOKEN],
+                CONF_WEBHOOK_ID: webhook_id,
+            },
+            options=options,
+            description_placeholders={"webhook_url": webhook_url},
+        )
 
 
 class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
@@ -136,17 +268,8 @@ class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
         auth_token = self.config_entry.data.get(CONF_AUTH_TOKEN)
         if not account_sid or not auth_token:
             return []
-
-        client = Client(account_sid, auth_token)
-        numbers = await self.hass.async_add_executor_job(
-            lambda: client.incoming_phone_numbers.list(limit=1000)
-        )
-        return sorted(
-            {
-                str(number.phone_number).strip()
-                for number in numbers
-                if getattr(number, "phone_number", None)
-            }
+        return await _async_get_incoming_phone_numbers(
+            hass=self.hass, account_sid=account_sid, auth_token=auth_token
         )
 
     async def async_step_init(
@@ -156,14 +279,9 @@ class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            selected_numbers = user_input.get(CONF_PHONE_NUMBERS, [])
-            if not isinstance(selected_numbers, list):
-                selected_numbers = []
-            selected_numbers = [
-                str(number).strip()
-                for number in selected_numbers
-                if str(number).strip()
-            ]
+            selected_numbers = _normalize_selected_numbers(
+                user_input.get(CONF_PHONE_NUMBERS, [])
+            )
 
             user_input[CONF_PHONE_NUMBERS] = selected_numbers
             # Keep legacy option populated for backward compatibility.
@@ -193,25 +311,14 @@ class TwilioOptionsFlowHandler(config_entries.OptionsFlow):
                 available_numbers.append(selected)
         available_numbers.sort()
 
-        select_options: Sequence[SelectOptionDict] = [
-            {"value": number, "label": number} for number in available_numbers
-        ]
-
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_PHONE_NUMBERS,
-                        default=default_numbers,
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=select_options,
-                            multiple=True,
-                            custom_value=True,
-                            mode=SelectSelectorMode.DROPDOWN,
-                        )
-                    ),
+                _build_phone_numbers_schema(
+                    default_numbers=default_numbers,
+                    options=available_numbers,
+                ).schema
+                | {
                     vol.Optional(
                         CONF_SENSOR_CLEANUP_HOURS,
                         default=self.config_entry.options.get(
