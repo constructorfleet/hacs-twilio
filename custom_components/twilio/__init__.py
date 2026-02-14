@@ -245,10 +245,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
             # Wait a moment for sensor to be created
-            await hass.async_add_executor_job(lambda: __import__('time').sleep(0.5))
+            import asyncio
+            await asyncio.sleep(0.5)
 
-            # Try to get the entity_id of the sensor
-            entity_id = f"sensor.twilio_call_{call_sid[:8]}".lower()
+            # Get the entity_id of the sensor
+            entity_id = f"sensor.twilio_call_{call_sid}".lower()
 
             _LOGGER.info("Call initiated to %s with SID %s", to_number, call_sid)
 

@@ -141,7 +141,7 @@ async def async_setup_entry(
             sensor.update_from_event(event.data)
         else:
             # Create new sensor for this call
-            sensor = TwilioCallSensor(hass, call_sid, event.data)
+            sensor = TwilioCallSensor(call_sid, event.data)
             entities_dict[call_sid] = sensor
             async_add_entities([sensor], True)
 
@@ -200,7 +200,7 @@ async def async_setup_entry(
 class TwilioCallSensor(SensorEntity):
     """Representation of a Twilio voice call sensor."""
 
-    def __init__(self, hass: HomeAssistant, call_sid: str, call_data: dict[str, Any]) -> None:
+    def __init__(self, call_sid: str, call_data: dict[str, Any]) -> None:
         """Initialize the sensor."""
         self._call_sid = call_sid
         self._call_status = call_data.get(ATTR_CALL_STATUS, "unknown")
