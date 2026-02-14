@@ -13,7 +13,7 @@ from twilio.base.exceptions import TwilioRestException
 from twilio.twiml.voice_response import Gather, Start, VoiceResponse
 
 from homeassistant.components.notify import NotifyEntity
-from homeassistant.components.notify.const import ATTR_DATA
+from homeassistant.components.notify.const import ATTR_DATA, ATTR_TARGET
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -90,6 +90,8 @@ async def async_setup_entry(
         return
 
     options = getattr(entry, "options", {}) or {}
+    if len(options) == 0:
+        options = getattr(entry, "data", {}) or {}
     configured_numbers = options.get(CONF_PHONE_NUMBERS, [])
     if not isinstance(configured_numbers, list):
         configured_numbers = []
@@ -142,13 +144,34 @@ async def async_setup_entry(
         if not isinstance(number_call_targets, list):
             number_call_targets = call_targets
         number_call_targets = [
-            str(target).strip()
-            for target in number_call_targets
-            if str(target).strip()
+            str(target).strip() for target in number_call_targets if str(target).strip()
         ]
 
         if not number_sms_targets and not number_call_targets:
             missing_mappings.append(number)
+            # Fallback: create generic per-number entities until explicit mappings exist.
+            entities.append(
+                TwilioSMSNotificationEntity(
+                    twilio_client=twilio_client,
+                    from_number=number,
+                    target_number=None,
+                    webhook_url=webhook_url,
+                    entry_id=entry.entry_id,
+                )
+            )
+            entities.append(
+                TwilioCallNotificationEntity(
+                    twilio_client=twilio_client,
+                    from_number=number,
+                    target_number=None,
+                    voice=voice,
+                    language=language,
+                    phrase_mappings=phrase_mappings,
+                    webhook_url=webhook_url,
+                    entry_id=entry.entry_id,
+                )
+            )
+            continue
 
         for target in number_sms_targets:
             entities.append(
@@ -190,10 +213,32 @@ async def async_setup_entry(
         ir.async_delete_issue(hass, DOMAIN, issue_id)
 
     if not entities:
+        # Last-resort fallback: create per-number generic entities so notify stays usable.
+        for number in configured_numbers:
+            entities.append(
+                TwilioSMSNotificationEntity(
+                    twilio_client=twilio_client,
+                    from_number=number,
+                    target_number=None,
+                    webhook_url=webhook_url,
+                    entry_id=entry.entry_id,
+                )
+            )
+            entities.append(
+                TwilioCallNotificationEntity(
+                    twilio_client=twilio_client,
+                    from_number=number,
+                    target_number=None,
+                    voice=voice,
+                    language=language,
+                    phrase_mappings=phrase_mappings,
+                    webhook_url=webhook_url,
+                    entry_id=entry.entry_id,
+                )
+            )
         _LOGGER.warning(
-            "Skipping Twilio notify setup: no target phone numbers configured for SMS or Call"
+            "No target mappings resolved; created generic Twilio notify entities for configured numbers"
         )
-        return
 
     async_add_entities(entities)
 
@@ -217,7 +262,7 @@ class TwilioSMSNotificationEntity(NotifyEntity):
         self,
         twilio_client: Any,
         from_number: str,
-        target_number: str,
+        target_number: str | None,
         webhook_url: str | None,
         entry_id: str,
     ) -> None:
@@ -226,10 +271,15 @@ class TwilioSMSNotificationEntity(NotifyEntity):
         self.from_number = from_number
         self.target_number = target_number
         self.webhook_url = webhook_url
+        target_key = _phone_number_key(target_number) if target_number else "any"
         self._attr_unique_id = (
-            f"{entry_id}_twilio_sms_{_phone_number_key(from_number)}_{_phone_number_key(target_number)}"
+            f"{entry_id}_twilio_sms_{_phone_number_key(from_number)}_{target_key}"
         )
-        self._attr_name = f"Twilio SMS {from_number} to {target_number}"
+        self._attr_name = (
+            f"Twilio SMS {from_number} to {target_number}"
+            if target_number
+            else f"Twilio SMS {from_number}"
+        )
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"{entry_id}_{_phone_number_key(from_number)}")},
             "name": f"Twilio {from_number}",
@@ -345,7 +395,9 @@ class TwilioSMSNotificationEntity(NotifyEntity):
     ) -> None:
         """Send SMS/MMS to specified target user."""
         del title
-        targets = [self.target_number]
+        targets = (
+            [self.target_number] if self.target_number else kwargs.get(ATTR_TARGET)
+        )
         data = kwargs.get(ATTR_DATA) or {}
         twilio_args: dict[str, str | list[str]] = {
             "body": message,
@@ -437,7 +489,7 @@ class TwilioCallNotificationEntity(NotifyEntity):
         self,
         twilio_client,
         from_number,
-        target_number: str,
+        target_number: str | None,
         voice=DEFAULT_VOICE,
         language=DEFAULT_LANGUAGE,
         phrase_mappings=None,
@@ -452,10 +504,15 @@ class TwilioCallNotificationEntity(NotifyEntity):
         self.language = language
         self.phrase_mappings = phrase_mappings or {}
         self.webhook_url = webhook_url
+        target_key = _phone_number_key(target_number) if target_number else "any"
         self._attr_unique_id = (
-            f"{entry_id}_twilio_call_{_phone_number_key(from_number)}_{_phone_number_key(target_number)}"
+            f"{entry_id}_twilio_call_{_phone_number_key(from_number)}_{target_key}"
         )
-        self._attr_name = f"Twilio Call {from_number} to {target_number}"
+        self._attr_name = (
+            f"Twilio Call {from_number} to {target_number}"
+            if target_number
+            else f"Twilio Call {from_number}"
+        )
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{entry_id}_{_phone_number_key(from_number)}")},
             name=f"Twilio {from_number}",
@@ -469,7 +526,10 @@ class TwilioCallNotificationEntity(NotifyEntity):
     ) -> None:
         """Make voice call to specified target users."""
         del title
-        targets = [self.target_number]
+        targets = cast(
+            list[str],
+            [self.target_number] if self.target_number else kwargs.get(ATTR_TARGET),
+        )
 
         valid_targets = [
             target

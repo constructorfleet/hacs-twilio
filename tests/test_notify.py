@@ -91,6 +91,37 @@ async def test_async_setup_entry_uses_legacy_from_number_fallback(
 
 
 @pytest.mark.unit
+@pytest.mark.asyncio
+async def test_async_setup_entry_creates_fallback_entities_without_targets(
+    hass, mock_twilio_client
+):
+    """Setup should still create generic entities when no targets are mapped."""
+    entry = MagicMock()
+    entry.entry_id = "entry-1"
+    entry.options = {
+        CONF_PHONE_NUMBERS: ["+1234567890"],
+        CONF_FROM_NUMBER: "+1234567890",
+        CONF_SMS_TARGETS: [],
+        CONF_CALL_TARGETS: [],
+    }
+
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][entry.entry_id] = {
+        DATA_TWILIO: mock_twilio_client,
+        "webhook_url": "https://example.com/webhook",
+    }
+
+    async_add_entities = MagicMock()
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    async_add_entities.assert_called_once()
+    entities = async_add_entities.call_args.args[0]
+    assert len(entities) == 2
+    assert isinstance(entities[0], TwilioSMSNotificationEntity)
+    assert isinstance(entities[1], TwilioCallNotificationEntity)
+
+
+@pytest.mark.unit
 def test_notify_entities_include_device_info(mock_twilio_client):
     """SMS/Call entities should share per-number device info identifiers."""
     sms = TwilioSMSNotificationEntity(
