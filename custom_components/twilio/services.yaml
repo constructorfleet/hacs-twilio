@@ -37,3 +37,73 @@
 #       profanity_filter: Filter profanity in transcription (true/false, default: false)
 #       partial_results: Enable partial transcription results in real-time (true/false, default: false)
 #       automatic_punctuation: Enable automatic punctuation (true/false, default: false)
+
+# Send DTMF Service
+send_dtmf:
+  name: Send DTMF Digits
+  description: Send DTMF digits (key presses) to an active voice call
+  fields:
+    call_sid:
+      name: Call SID
+      description: The unique identifier of the active call (from sensor or event)
+      required: true
+      example: "CA1234567890abcdef1234567890abcdef"
+      selector:
+        text:
+    digits:
+      name: Digits
+      description: DTMF digits to send (0-9, *, #, w for 0.5s pause)
+      required: true
+      example: "1234#"
+      selector:
+        text:
+
+# Start Recording Service
+start_recording:
+  name: Start Call Recording
+  description: Start recording an active voice call on demand
+  fields:
+    call_sid:
+      name: Call SID
+      description: The unique identifier of the active call (from sensor or event)
+      required: true
+      example: "CA1234567890abcdef1234567890abcdef"
+      selector:
+        text:
+    recording_channels:
+      name: Recording Channels
+      description: Record in mono or dual channel (default is mono)
+      required: false
+      default: "mono"
+      selector:
+        select:
+          options:
+            - "mono"
+            - "dual"
+    recording_status_callback:
+      name: Status Callback
+      description: Enable recording status callbacks to the configured webhook
+      required: false
+      default: false
+      selector:
+        boolean:
+    recording_status_callback_method:
+      name: Status Callback Method
+      description: HTTP method for recording status callbacks
+      required: false
+      default: "POST"
+      selector:
+        select:
+          options:
+            - "GET"
+            - "POST"
+    trim:
+      name: Trim
+      description: Trim silence from recording
+      required: false
+      default: "trim-silence"
+      selector:
+        select:
+          options:
+            - "trim-silence"
+            - "do-not-trim"

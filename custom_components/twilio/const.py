@@ -27,6 +27,9 @@ ATTR_CALL_SID = "call_sid"
 ATTR_CALL_STATUS = "call_status"
 ATTR_TRANSCRIPTION = "transcription_text"
 ATTR_DTMF_DIGITS = "digits"
+ATTR_CURRENT_TRANSCRIPTION = "current_transcription_segment"
+ATTR_FULL_TRANSCRIPTION = "full_transcription"
+ATTR_PHONE_NUMBER = "phone_number"
 
 # TwiML response types
 TWIML_SAY = "say"
@@ -60,3 +63,7 @@ DEFAULT_FINISH_ON_KEY = "#"
 DEFAULT_VOICE = "alice"
 DEFAULT_LANGUAGE = "en-US"
 DEFAULT_TRANSCRIBE_LANGUAGE = "en-US"
+
+# Services
+SERVICE_SEND_DTMF = "send_dtmf"
+SERVICE_START_RECORDING = "start_recording"

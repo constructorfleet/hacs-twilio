@@ -33,11 +33,13 @@ from .const import (
     ATTR_CALL_STATUS,
     ATTR_TRANSCRIPTION,
     ATTR_DTMF_DIGITS,
+    SERVICE_SEND_DTMF,
+    SERVICE_START_RECORDING,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.NOTIFY]
+PLATFORMS = [Platform.NOTIFY, Platform.SENSOR]
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -177,6 +179,103 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Forward setup to platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Register services
+    async def async_send_dtmf(call):
+        """Send DTMF digits to an active call."""
+        call_sid = call.data.get(ATTR_CALL_SID)
+        digits = call.data.get(ATTR_DTMF_DIGITS)
+        
+        if not call_sid or not digits:
+            _LOGGER.error("call_sid and digits are required for send_dtmf service")
+            return
+        
+        # Get the Twilio client
+        client = None
+        for entry_data in hass.data[DOMAIN].values():
+            if isinstance(entry_data, dict) and DATA_TWILIO in entry_data:
+                client = entry_data[DATA_TWILIO]
+                break
+        
+        if not client:
+            _LOGGER.error("Twilio client not found")
+            return
+        
+        try:
+            # Send DTMF digits to the call
+            client.calls(call_sid).update(digits=digits, method="POST")
+            _LOGGER.info("Sent DTMF digits '%s' to call %s", digits, call_sid)
+        except Exception as err:
+            _LOGGER.error("Failed to send DTMF digits to call %s: %s", call_sid, err)
+    
+    async def async_start_recording(call):
+        """Start recording an active call."""
+        call_sid = call.data.get(ATTR_CALL_SID)
+        
+        if not call_sid:
+            _LOGGER.error("call_sid is required for start_recording service")
+            return
+        
+        # Get the Twilio client
+        client = None
+        for entry_data in hass.data[DOMAIN].values():
+            if isinstance(entry_data, dict) and DATA_TWILIO in entry_data:
+                client = entry_data[DATA_TWILIO]
+                break
+        
+        if not client:
+            _LOGGER.error("Twilio client not found")
+            return
+        
+        try:
+            # Get optional parameters
+            recording_channels = call.data.get("recording_channels", "mono")
+            recording_status_callback = call.data.get("recording_status_callback")
+            recording_status_callback_method = call.data.get("recording_status_callback_method", "POST")
+            trim = call.data.get("trim", "trim-silence")
+            
+            # Start recording
+            recording_params = {
+                "recording_channels": recording_channels,
+                "trim": trim,
+            }
+            
+            # Add status callback if webhook URL is configured
+            if recording_status_callback:
+                for entry_data in hass.data[DOMAIN].values():
+                    if isinstance(entry_data, dict) and "webhook_url" in entry_data:
+                        recording_params["recording_status_callback"] = entry_data["webhook_url"]
+                        recording_params["recording_status_callback_method"] = recording_status_callback_method
+                        break
+            
+            client.calls(call_sid).recordings.create(**recording_params)
+            _LOGGER.info("Started recording for call %s", call_sid)
+        except Exception as err:
+            _LOGGER.error("Failed to start recording for call %s: %s", call_sid, err)
+    
+    # Register the services
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SEND_DTMF,
+        async_send_dtmf,
+        schema=vol.Schema({
+            vol.Required(ATTR_CALL_SID): cv.string,
+            vol.Required(ATTR_DTMF_DIGITS): cv.string,
+        }),
+    )
+    
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_START_RECORDING,
+        async_start_recording,
+        schema=vol.Schema({
+            vol.Required(ATTR_CALL_SID): cv.string,
+            vol.Optional("recording_channels", default="mono"): vol.In(["mono", "dual"]),
+            vol.Optional("recording_status_callback", default=False): cv.boolean,
+            vol.Optional("recording_status_callback_method", default="POST"): vol.In(["GET", "POST"]),
+            vol.Optional("trim", default="trim-silence"): vol.In(["trim-silence", "do-not-trim"]),
+        }),
+    )
+
     return True
 
 
@@ -188,6 +287,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         # Unregister webhook
         webhook.async_unregister(hass, entry.data[CONF_WEBHOOK_ID])
+
+        # Unregister services
+        hass.services.async_remove(DOMAIN, SERVICE_SEND_DTMF)
+        hass.services.async_remove(DOMAIN, SERVICE_START_RECORDING)
 
         # Remove data
         hass.data[DOMAIN].pop(entry.entry_id)
