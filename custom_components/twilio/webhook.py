@@ -30,6 +30,13 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _coerce_form_value(value: object) -> str:
+    """Convert a form value to string while preserving missing values as empty."""
+    if value is None:
+        return ""
+    return str(value)
+
+
 def _extract_transcription_text(data: dict) -> str:
     """Extract transcription text from Twilio TranscriptionData payload."""
     transcription_data = data.get("TranscriptionData")
@@ -120,11 +127,11 @@ async def handle_webhook(
         data["webhook_id"] = webhook_id
 
         # Determine the type of webhook and fire appropriate event
-        message_sid = str(data.get("MessageSid"))
-        call_sid = str(data.get("CallSid"))
-        transcription_sid = str(data.get("TranscriptionSid"))
-        transcription_event = str(data.get("TranscriptionEvent"))
-        digits = str(data.get("Digits"))
+        message_sid = _coerce_form_value(data.get("MessageSid"))
+        call_sid = _coerce_form_value(data.get("CallSid"))
+        transcription_sid = _coerce_form_value(data.get("TranscriptionSid"))
+        transcription_event = _coerce_form_value(data.get("TranscriptionEvent"))
+        digits = _coerce_form_value(data.get("Digits"))
 
         if transcription_event:
             if not call_sid:
