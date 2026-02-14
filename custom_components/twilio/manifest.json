@@ -8,6 +8,6 @@
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/constructorfleet/hacs-twilio/issues",
   "loggers": ["twilio"],
-  "requirements": ["twilio==9.0.4"],
+  "requirements": ["twilio==9.10.1"],
   "version": "1.0.0"
 }

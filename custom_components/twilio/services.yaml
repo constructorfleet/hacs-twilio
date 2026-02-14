@@ -1,0 +1,28 @@
+# Services provided by the Twilio integration
+# These are available through the notify platform
+
+# SMS/MMS Service (via notify platform)
+# Service: notify.twilio_sms
+# Description: Send SMS or MMS messages via Twilio
+# Fields:
+#   message: Text message to send
+#   target: List of phone numbers (with country code, e.g., +1234567890)
+#   data:
+#     media_url: (Optional) URL(s) of media to send (for MMS)
+
+# Voice Call Service (via notify platform)  
+# Service: notify.twilio_call
+# Description: Make automated voice calls via Twilio
+# Fields:
+#   message: Message to speak or TwiML URL
+#   target: List of phone numbers (with country code, e.g., +1234567890)
+#   data:
+#     call_type: (Optional) Type of call - "simple", "twiml", or "interactive" (default: "simple")
+#     twiml_url: (Optional) Custom TwiML URL for call_type "twiml"
+#     gather_enabled: (Optional) Enable DTMF input collection (default: false)
+#     record_enabled: (Optional) Enable call recording (default: false)
+#     transcribe_enabled: (Optional) Enable transcription of recordings (default: false)
+#     gather_config: (Optional) Configuration for gather
+#       num_digits: Number of digits to collect (default: 1)
+#       timeout: Timeout in seconds (default: 5)
+#       finish_on_key: Key to finish input (default: "#")
