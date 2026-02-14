@@ -16,7 +16,6 @@ from .const import (
     ATTR_BODY,
     ATTR_CALL_SID,
     ATTR_DTMF_DIGITS,
-    ATTR_FROM,
     ATTR_MEDIA_URL,
     ATTR_TO,
 )
